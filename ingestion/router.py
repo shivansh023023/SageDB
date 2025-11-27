@@ -38,6 +38,7 @@ class IngestionResponse(BaseModel):
     edges_created: int
     message: str
     processing_time_ms: Optional[float] = None
+    chunk_uuids: List[str] = []
 
 
 class BatchIngestionResponse(BaseModel):
@@ -115,7 +116,8 @@ async def ingest_file(
             nodes_created=result.nodes_created,
             edges_created=result.edges_created,
             message=result.message,
-            processing_time_ms=round(processing_time, 2)
+            processing_time_ms=round(processing_time, 2),
+            chunk_uuids=result.chunk_uuids
         )
         
     except ValueError as e:
@@ -173,7 +175,8 @@ async def ingest_batch(
                 nodes_created=result.nodes_created,
                 edges_created=result.edges_created,
                 message=result.message,
-                processing_time_ms=round(processing_time, 2)
+                processing_time_ms=round(processing_time, 2),
+                chunk_uuids=result.chunk_uuids
             ))
             
             if result.success:
@@ -190,7 +193,8 @@ async def ingest_batch(
                 chunks_created=0,
                 nodes_created=0,
                 edges_created=0,
-                message=str(e)
+                message=str(e),
+                chunk_uuids=[]
             ))
             failed += 1
     
@@ -260,7 +264,8 @@ async def ingest_text(
             nodes_created=result.nodes_created,
             edges_created=result.edges_created,
             message=result.message,
-            processing_time_ms=round(processing_time, 2)
+            processing_time_ms=round(processing_time, 2),
+            chunk_uuids=result.chunk_uuids
         )
         
     except ValueError as e:

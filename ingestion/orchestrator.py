@@ -56,7 +56,7 @@ class IngestionOrchestrator:
         self._vector_index = None
         self._graph_manager = None
         self._embedding_service = None
-        self.chunker = SemanticChunker()
+        # Note: chunker is created per-request to avoid race conditions (Fix #6)
     
     @property
     def sqlite_manager(self):
@@ -149,14 +149,15 @@ class IngestionOrchestrator:
             )
         
         # 4. Chunk sections
-        self.chunker = SemanticChunker(
+        # Create chunker as local variable to avoid race conditions (Fix #6)
+        chunker = SemanticChunker(
             max_tokens=config.chunk_size,
             overlap_tokens=config.chunk_overlap
         )
         
         all_chunks: List[Chunk] = []
         for section in sections:
-            section_chunks = self.chunker.chunk_text(
+            section_chunks = chunker.chunk_text(
                 text=section.text,
                 title=section.title,
                 hierarchy=section.hierarchy,

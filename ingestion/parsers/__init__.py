@@ -1,11 +1,13 @@
 # File Parsers Module
 # Each parser extracts content-bearing sections from different file types
+# All parsers implement "Sticky Header" pattern: headers are magnets that hold content
 
 from .base import BaseParser, ContentSection
 from .markdown_parser import MarkdownParser
 from .html_parser import HTMLParser
 from .text_parser import TextParser
 from .json_parser import JSONParser
+from .xml_parser import XMLParser
 
 __all__ = [
     'BaseParser',
@@ -14,6 +16,7 @@ __all__ = [
     'HTMLParser',
     'TextParser',
     'JSONParser',
+    'XMLParser',
 ]
 
 # Parser registry - maps file type to parser class
@@ -22,6 +25,7 @@ PARSER_REGISTRY = {
     'html': HTMLParser,
     'text': TextParser,
     'json': JSONParser,
+    'xml': XMLParser,
 }
 
 

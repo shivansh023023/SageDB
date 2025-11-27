@@ -69,32 +69,54 @@ def rebuild_faiss_from_sqlite():
     """Rebuild FAISS index from SQLite data."""
     logger.info("Starting FAISS index rebuild from SQLite...")
     
-    # Get all nodes from SQLite
-    all_nodes = sqlite_manager.get_all_nodes(limit=10000, offset=0)
+    # Get all nodes from SQLite with pagination (Fix #7)
+    batch_size = 1000
+    offset = 0
+    total_nodes = 0
     
-    for node in all_nodes:
-        uuid = node['uuid']
-        text = node['text']
-        faiss_id = node['faiss_id']
+    while True:
+        all_nodes = sqlite_manager.get_all_nodes(limit=batch_size, offset=offset)
+        if not all_nodes:
+            break
+            
+        for node in all_nodes:
+            uuid = node['uuid']
+            text = node['text']
+            faiss_id = node['faiss_id']
+            
+            # Generate embedding
+            vector = embedding_service.encode(text)
+            
+            # Add to FAISS
+            vector_index.add_vector(vector, faiss_id, uuid)
+            
+            # Also ensure node is in graph
+            graph_manager.add_node(uuid)
         
-        # Generate embedding
-        vector = embedding_service.encode(text)
+        total_nodes += len(all_nodes)
+        offset += batch_size
         
-        # Add to FAISS
-        vector_index.add_vector(vector, faiss_id, uuid)
-        
-        # Also ensure node is in graph
-        graph_manager.add_node(uuid)
+        if len(all_nodes) < batch_size:
+            break
     
-    # Rebuild edges in graph from SQLite
-    all_edges = sqlite_manager.get_all_edges(limit=10000, offset=0)
-    for edge in all_edges:
-        graph_manager.add_edge(
-            edge['source_id'], 
-            edge['target_id'], 
-            edge['relation'], 
-            edge['weight']
-        )
+    # Rebuild edges in graph from SQLite with pagination
+    offset = 0
+    while True:
+        all_edges = sqlite_manager.get_all_edges(limit=batch_size, offset=offset)
+        if not all_edges:
+            break
+            
+        for edge in all_edges:
+            graph_manager.add_edge(
+                edge['source_id'], 
+                edge['target_id'], 
+                edge['relation'], 
+                edge['weight']
+            )
+        
+        offset += batch_size
+        if len(all_edges) < batch_size:
+            break
     
     logger.info(f"FAISS rebuild complete. Total vectors: {vector_index.ntotal}")
 

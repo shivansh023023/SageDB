@@ -34,6 +34,11 @@ class GraphManager:
     def add_edge(self, source: str, target: str, relation: str, weight: float):
         self.graph.add_edge(source, target, relation=relation, weight=weight)
 
+    def remove_edge(self, source: str, target: str):
+        """Remove edge between two nodes if it exists."""
+        if self.graph.has_edge(source, target):
+            self.graph.remove_edge(source, target)
+
     def save(self):
         nx.write_gpickle(self.graph, self.graph_path)
 
@@ -281,5 +286,100 @@ class GraphManager:
             "relationship": relationship_score,
             "combined": combined
         }
+
+    def get_context_window(self, node_uuid: str, before: int = 2, after: int = 2) -> Dict[str, List[str]]:
+        """
+        Get the sliding context window around a node using next_chunk/previous_chunk edges.
+        
+        This implements "Solution B" for context fragmentation:
+        By traversing sequential edges, we can retrieve the chunks before and after
+        the matched chunk, ensuring headers get their content and vice versa.
+        
+        Args:
+            node_uuid: The central node to get context around
+            before: Number of previous chunks to retrieve (default 2)
+            after: Number of next chunks to retrieve (default 2)
+            
+        Returns:
+            Dict with 'before' (list of UUIDs), 'current', and 'after' (list of UUIDs)
+        """
+        if not self.graph.has_node(node_uuid):
+            return {"before": [], "current": node_uuid, "after": []}
+        
+        # Get chunks BEFORE (traverse previous_chunk edges backwards)
+        before_chunks = []
+        current = node_uuid
+        for _ in range(before):
+            # Look for incoming previous_chunk or outgoing next_chunk TO us
+            prev_found = None
+            
+            # Check predecessors with next_chunk relation pointing to us
+            for pred in self.graph.predecessors(current):
+                edge_data = self.graph.get_edge_data(pred, current)
+                if edge_data and edge_data.get('relation') == 'next_chunk':
+                    prev_found = pred
+                    break
+            
+            # Also check if we have outgoing previous_chunk
+            if not prev_found:
+                for succ in self.graph.successors(current):
+                    edge_data = self.graph.get_edge_data(current, succ)
+                    if edge_data and edge_data.get('relation') == 'previous_chunk':
+                        prev_found = succ
+                        break
+            
+            if prev_found:
+                before_chunks.insert(0, prev_found)  # Insert at front to maintain order
+                current = prev_found
+            else:
+                break
+        
+        # Get chunks AFTER (traverse next_chunk edges forwards)
+        after_chunks = []
+        current = node_uuid
+        for _ in range(after):
+            next_found = None
+            
+            # Check successors with next_chunk relation
+            for succ in self.graph.successors(current):
+                edge_data = self.graph.get_edge_data(current, succ)
+                if edge_data and edge_data.get('relation') == 'next_chunk':
+                    next_found = succ
+                    break
+            
+            # Also check if someone points to us with previous_chunk
+            if not next_found:
+                for pred in self.graph.predecessors(current):
+                    edge_data = self.graph.get_edge_data(pred, current)
+                    if edge_data and edge_data.get('relation') == 'previous_chunk':
+                        next_found = pred
+                        break
+            
+            if next_found:
+                after_chunks.append(next_found)
+                current = next_found
+            else:
+                break
+        
+        return {
+            "before": before_chunks,
+            "current": node_uuid,
+            "after": after_chunks
+        }
+
+    def get_full_context_window(self, node_uuid: str, before: int = 2, after: int = 2) -> List[str]:
+        """
+        Get ordered list of all UUIDs in the context window.
+        
+        Args:
+            node_uuid: Central node
+            before: Chunks before (default 2)
+            after: Chunks after (default 2)
+            
+        Returns:
+            Ordered list: [before..., current, after...]
+        """
+        window = self.get_context_window(node_uuid, before, after)
+        return window["before"] + [window["current"]] + window["after"]
 
 graph_manager = GraphManager()

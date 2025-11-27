@@ -6,7 +6,8 @@ import os
 
 from models.api_schemas import (
     NodeCreate, NodeResponse, NodeUpdate, EdgeCreate, EdgeResponse,
-    SearchQuery, VectorSearchQuery, SearchResponse, BenchmarkRequest
+    SearchQuery, VectorSearchQuery, SearchResponse, BenchmarkRequest,
+    ContextSearchQuery, ContextSearchResult, ContextSearchResponse
 )
 from core.lock import read_locked, write_locked
 from core.embedding import embedding_service
@@ -168,10 +169,9 @@ def delete_edge(edge_id: int):
         if not deleted:
             raise HTTPException(status_code=404, detail="Edge not found")
         
-        # Remove from NetworkX (if edge exists)
+        # Remove from NetworkX using proper encapsulation
         try:
-            if graph_manager.graph.has_edge(edge_data['source_id'], edge_data['target_id']):
-                graph_manager.graph.remove_edge(edge_data['source_id'], edge_data['target_id'])
+            graph_manager.remove_edge(edge_data['source_id'], edge_data['target_id'])
         except Exception:
             pass  # Edge might not exist in graph
         
@@ -308,6 +308,136 @@ def hybrid_search(query: SearchQuery):
         
     except Exception as e:
         logger.error(f"Error in hybrid search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/v1/search/context", response_model=ContextSearchResponse)
+@read_locked
+def context_aware_search(query: ContextSearchQuery):
+    """
+    Context-aware hybrid search with sliding window expansion.
+    
+    This is the primary search endpoint for RAG applications.
+    It implements "Solution B" for context fragmentation:
+    
+    For each matched chunk, we traverse next_chunk/previous_chunk edges
+    to retrieve a context window (default: 2 before + current + 2 after = 5 chunks).
+    
+    This ensures that if a query matches a header, we also return the content,
+    and if it matches content, we also return the header.
+    """
+    try:
+        # Normalize alpha/beta
+        total = query.alpha + query.beta
+        if total > 0:
+            alpha = query.alpha / total
+            beta = query.beta / total
+        else:
+            alpha, beta = 0.5, 0.5
+        
+        # 1. Encode query
+        query_vector = embedding_service.encode(query.text)
+        
+        # 2. FAISS Search (Initial Seeds)
+        initial_k = min(50, query.top_k * 5)
+        seed_uuids, seed_scores = vector_index.search(query_vector, k=initial_k)
+        
+        if not seed_uuids:
+            return ContextSearchResponse(results=[], count=0)
+
+        seed_score_map = {uuid: score for uuid, score in zip(seed_uuids, seed_scores)}
+        
+        # 3. Graph Expansion
+        expansion_depth = 2
+        expanded_candidates = graph_manager.expand_from_seeds(seed_uuids[:20], depth=expansion_depth)
+        
+        # 4. Compute vector scores for expanded candidates
+        new_nodes = [n for n in expanded_candidates if n not in seed_score_map]
+        if new_nodes:
+            new_scores = vector_index.batch_compute_similarity(query_vector, new_nodes)
+            seed_score_map.update(new_scores)
+        
+        # 5. Hydrate candidates
+        all_candidates = []
+        for uuid_str in expanded_candidates:
+            node_data = sqlite_manager.get_node(uuid_str)
+            if node_data:
+                all_candidates.append({
+                    "id": uuid_str,
+                    "score": seed_score_map.get(uuid_str, 0.0),
+                    "text": node_data['text'],
+                    "metadata": node_data['metadata']
+                })
+        
+        # 6. Calculate Graph Scores
+        top_seeds = seed_uuids[:10]
+        graph_scores = {}
+        for candidate in all_candidates:
+            uuid_str = candidate['id']
+            graph_breakdown = graph_manager.calculate_expanded_graph_score(
+                uuid_str, top_seeds, seed_vector_scores=seed_score_map
+            )
+            graph_scores[uuid_str] = graph_breakdown['combined']
+        
+        # 7. Fusion
+        fused_results = hybrid_fusion(
+            all_candidates, graph_scores, alpha=alpha, beta=beta
+        )
+        
+        # 8. Filter low relevance
+        filtered_results = [
+            r for r in fused_results 
+            if r.get('score', 0) >= MINIMUM_RELEVANCE_THRESHOLD
+        ]
+        
+        # 9. Take top K
+        top_results = filtered_results[:query.top_k]
+        
+        # 10. CONTEXT EXPANSION - The key feature!
+        # For each result, get surrounding chunks via graph traversal
+        context_results = []
+        seen_uuids = set()  # Avoid duplicating chunks across results
+        
+        for result in top_results:
+            uuid_str = result['uuid']
+            
+            # Get context window
+            context_window = graph_manager.get_full_context_window(
+                uuid_str,
+                before=query.context_before,
+                after=query.context_after
+            )
+            
+            # Build combined context text
+            context_texts = []
+            context_uuids = []
+            
+            for ctx_uuid in context_window:
+                if ctx_uuid not in seen_uuids:
+                    ctx_node = sqlite_manager.get_node(ctx_uuid)
+                    if ctx_node:
+                        context_texts.append(ctx_node['text'])
+                        context_uuids.append(ctx_uuid)
+                        seen_uuids.add(ctx_uuid)
+            
+            # Join context texts with separator
+            context_text = "\n\n---\n\n".join(context_texts) if context_texts else result['text']
+            
+            context_results.append(ContextSearchResult(
+                uuid=uuid_str,
+                text=result['text'],
+                score=result['score'],
+                vector_score=result.get('vector_score', result['score']),
+                graph_score=result.get('graph_score', 0.0),
+                metadata=result['metadata'],
+                context_text=context_text,
+                context_uuids=context_uuids
+            ))
+        
+        return ContextSearchResponse(results=context_results, count=len(context_results))
+        
+    except Exception as e:
+        logger.error(f"Error in context-aware search: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

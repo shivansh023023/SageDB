@@ -50,6 +50,21 @@ class SearchQuery(BaseModel):
     # They are normalized internally to allow flexible weighting
 
 
+class ContextSearchQuery(BaseModel):
+    """Search query with context window expansion.
+    
+    Uses the "Sticky Header" solution to context fragmentation:
+    For each result, retrieves surrounding chunks via graph traversal
+    to ensure headers get their content and vice versa.
+    """
+    text: str = Field(..., min_length=1, max_length=1000)
+    top_k: int = Field(10, ge=1, le=100)
+    context_before: int = Field(2, ge=0, le=5, description="Chunks to include before each result")
+    context_after: int = Field(2, ge=0, le=5, description="Chunks to include after each result")
+    alpha: float = Field(0.7, ge=0.0, le=1.0)
+    beta: float = Field(0.3, ge=0.0, le=1.0)
+
+
 class VectorSearchQuery(BaseModel):
     """Vector-only search query."""
     text: str = Field(..., min_length=1, max_length=1000)
@@ -89,6 +104,25 @@ class SearchResult(BaseModel):
 class SearchResponse(BaseModel):
     results: List[SearchResult]
     count: int
+
+
+class ContextSearchResult(BaseModel):
+    """Search result with context window expansion."""
+    uuid: str
+    text: str
+    score: float
+    vector_score: float
+    graph_score: float
+    metadata: Dict[str, Any]
+    context_text: Optional[str] = Field(None, description="Combined text from context window")
+    context_uuids: List[str] = Field(default_factory=list, description="UUIDs in context window")
+
+
+class ContextSearchResponse(BaseModel):
+    """Response with context-expanded results."""
+    results: List[ContextSearchResult]
+    count: int
+
 
 class BenchmarkRequest(BaseModel):
     query: str
