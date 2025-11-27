@@ -21,6 +21,17 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Vector + Graph Native Database")
 
+# Enable CORS
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.on_event("startup")
 async def startup_event():
     logger.info("Starting up Vector + Graph Native Database...")
@@ -156,6 +167,9 @@ def rebuild_faiss_from_sqlite():
 
 app.include_router(router)
 app.include_router(ingestion_router)
+
+from api.viz_routes import router as viz_router
+app.include_router(viz_router)
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

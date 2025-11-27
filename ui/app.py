@@ -418,6 +418,9 @@ page = st.sidebar.radio(
     label_visibility="collapsed"
 )
 
+st.sidebar.markdown("---")
+st.sidebar.link_button("🚀 Launch Interactive Viz", "http://localhost:5174", use_container_width=True)
+
 def check_health():
     try:
         res = requests.get(f"{API_URL}/health")
@@ -1197,6 +1200,9 @@ elif page == "🔍 Search":
 elif page == "🕸️ Graph View":
     st.header("🕸️ Graph Visualization")
     st.caption("Explore relationships between nodes in your knowledge graph")
+    
+    st.info("💡 **New:** Try our interactive 3D/2D visualization!")
+    st.link_button("🚀 Launch Interactive Visualization", "http://localhost:5174", type="primary")
     
     st.divider()
     
