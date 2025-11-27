@@ -1,5 +1,35 @@
 # SageDB: Vector + Graph Native Database
 
+> **TL;DR**: A hybrid database combining FAISS (vector search) + NetworkX (graph traversal) + SQLite (persistence) with a novel **Graph Expansion Algorithm** that discovers related nodes through graph structure, not just re-ranks vector results.
+
+## Quick Start
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Start backend (port 8000)
+python main.py
+
+# Start UI (port 8501)
+streamlit run ui/app.py
+
+# Populate with test data
+python populate_db.py
+```
+
+## Table of Contents
+1. [Problem Statement](#1-problem-statement)
+2. [Our Solution: SageDB](#2-our-solution-sagedb)
+3. [Implementation Status](#3-implementation-status)
+4. [Future Work](#4-future-work-whats-left-to-implement)
+5. [Code Walkthrough](#5-code-walkthrough)
+6. [Q&A for Mentorship](#6-questions--clarifications-for-mentorship-round)
+7. [Demo Script](#7-demo-script-for-evaluation)
+8. [Future Enhancements](#8-future-enhancements-if-asked)
+9. [Questions for Evaluators](#9-questions-for-mentorsevaluators)
+
+---
+
 ## 1. Problem Statement
 
 **Devfolio Problem Statement 1: Vector + Graph Native Database for Efficient AI Retrieval**
@@ -188,16 +218,40 @@ Centrality Scores:
 - Serve as good entry points for exploration
 - Tend to have higher-quality content (more reviewed/linked)
 
-### Combining Connectivity and Centrality
+#### 3. Relationship Score (Edge Type Awareness)
 
-The final Graph Score is a weighted average:
+**What it measures**: The strength of direct relationships between the candidate and seed nodes based on edge types.
+
+**How it works**:
+The `get_relationship_score` function checks for direct edges between the candidate and each seed:
 ```python
-graph_score = (0.7 × connectivity_score) + (0.3 × centrality_score)
+edge_weights = {
+    "is_a": 1.0,        # Taxonomic hierarchy
+    "part_of": 0.95,    # Compositional
+    "specialization_of": 0.9,
+    "uses": 0.85,
+    "depends_on": 0.8,
+    "implements": 0.8,
+    "extends": 0.75,
+    "related_to": 0.5,  # Generic
+    "mentioned_in": 0.3
+}
+# Returns max score from all direct edges
 ```
 
-In our implementation:
-- `w_connectivity = 0.7` (70% weight on how close to search results)
+**Why this matters**: A node directly connected to a seed via a strong relationship (like `is_a`) should score higher than one connected via a weak relationship (like `mentioned_in`).
+
+### Combining Connectivity, Centrality, and Relationship Scores
+
+The final Graph Score is a weighted average of three components:
+```python
+graph_score = (0.5 × connectivity_score) + (0.3 × centrality_score) + (0.2 × relationship_score)
+```
+
+In our implementation (`calculate_expanded_graph_score`):
+- `w_connectivity = 0.5` (50% weight on how close to search results)
 - `w_centrality = 0.3` (30% weight on overall importance)
+- `w_relationship = 0.2` (20% weight on edge type strength)
 
 ### Full Example: Hybrid Search in Action (Graph Expansion Algorithm)
 
@@ -263,36 +317,48 @@ You can adjust these in the UI's search tab to see how results change!
 
 We have successfully built a working prototype that meets the core requirements of the problem statement.
 
-### What We Have Implemented
+### ✅ What We Have Implemented
 
-- **Backend API (FastAPI)**: A robust REST API handling all database operations.
-  - `POST /v1/nodes`: Create nodes with automatic embedding generation.
-  - `GET /v1/nodes`: List all nodes with pagination.
-  - `POST /v1/edges`: Create typed relationships between nodes.
-  - `GET /v1/edges`: List all edges.
-  - `POST /v1/search/hybrid`: **Graph-Augmented Hybrid Search** with expansion algorithm.
-  - `POST /v1/search/hybrid/legacy`: Legacy re-ranking algorithm for comparison.
-  - `GET /v1/search/graph`: Visualize subgraphs.
-- **Storage Engines**:
-  - **SQLite Manager**: Handles persistent storage of nodes and edges (source of truth).
-  - **Vector Index**: Wraps FAISS for adding/removing/searching vectors.
-  - **Graph Manager**: Wraps NetworkX with **new graph expansion methods**.
-- **Core Logic**:
-  - **Embedding Service**: Uses `sentence-transformers` (all-MiniLM-L6-v2) to generate embeddings locally.
-  - **Graph Expansion**: BFS-based expansion from seeds to discover related nodes.
-  - **Relationship-Aware Scoring**: Edge types affect connectivity scores.
-  - **Batch Vector Similarity**: Compute vector scores for graph-discovered nodes.
-  - **Hybrid Fusion**: Implements the scoring logic described above.
-  - **Auto-Rebuild**: Automatically rebuilds FAISS index from SQLite on startup if out of sync.
-  - **Concurrency Control**: Uses `readerwriterlock` to ensure thread safety across the three storage engines.
-- **User Interface (Streamlit)**:
-  - **Add Data**: Forms to create nodes and edges manually.
-  - **Search**: A search interface with tunable Alpha/Beta sliders and detailed scoring breakdowns.
-  - **Graph View**: Visualizes the graph structure using Matplotlib.
-  - **Data Explorer**: A tabular view of all data in the system.
-- **Testing & Population**:
-  - `populate_db.py`: A script to generate a mock dataset of 40 nodes and ~124 edges.
-  - `test_sagedb.py`: Comprehensive integration tests covering CRUD and Search.
+#### Backend API (FastAPI)
+| Endpoint | Method | Description | Status |
+|----------|--------|-------------|--------|
+| `/v1/nodes` | POST | Create nodes with automatic embedding generation | ✅ |
+| `/v1/nodes` | GET | List all nodes with pagination | ✅ |
+| `/v1/nodes/{uuid}` | GET | Retrieve single node | ✅ |
+| `/v1/nodes/{uuid}` | DELETE | Delete node from all storage layers | ✅ |
+| `/v1/edges` | POST | Create typed relationships between nodes | ✅ |
+| `/v1/edges` | GET | List all edges with pagination | ✅ |
+| `/v1/search/hybrid` | POST | **Graph-Augmented Hybrid Search** with expansion | ✅ |
+| `/v1/search/hybrid/legacy` | POST | Legacy re-ranking algorithm for comparison | ✅ |
+| `/v1/search/graph` | GET | Subgraph visualization endpoint | ✅ |
+| `/v1/benchmark` | POST | Calculate Precision/Recall/NDCG metrics | ✅ |
+| `/v1/admin/snapshot` | POST | Persist FAISS and Graph to disk | ✅ |
+| `/health` | GET | System health check | ✅ |
+
+#### Storage Engines
+- ✅ **SQLite Manager**: Handles persistent storage of nodes and edges (source of truth)
+- ✅ **Vector Index**: Wraps FAISS for adding/removing/searching vectors with ID mapping
+- ✅ **Graph Manager**: Wraps NetworkX with graph expansion and relationship-aware scoring
+
+#### Core Logic
+- ✅ **Embedding Service**: Uses `sentence-transformers` (all-MiniLM-L6-v2), 384 dimensions
+- ✅ **Graph Expansion**: BFS-based expansion from seeds (`expand_from_seeds`)
+- ✅ **Relationship-Aware Scoring**: Edge types affect connectivity scores (`get_relationship_score`)
+- ✅ **Batch Vector Similarity**: Compute vector scores for graph-discovered nodes (`batch_compute_similarity`)
+- ✅ **Hybrid Fusion**: Alpha/Beta weighted combination with Min-Max normalization
+- ✅ **Auto-Rebuild**: Automatically rebuilds FAISS index from SQLite on startup if mismatch detected
+- ✅ **Concurrency Control**: Uses `readerwriterlock` for thread-safe operations
+
+#### User Interface (Streamlit)
+- ✅ **System Health**: Backend status and data counts
+- ✅ **Add Data**: Forms to create nodes and edges manually
+- ✅ **Search**: Interactive search with Alpha/Beta sliders and detailed scoring breakdowns
+- ✅ **Graph View**: Matplotlib-based subgraph visualization
+- ✅ **Data Explorer**: Tabular view of all nodes and edges
+
+#### Testing & Population
+- ✅ `populate_db.py`: Script to generate AI/ML knowledge graph (40 nodes, ~124 edges)
+- ✅ `test_sagedb.py`: Integration tests covering CRUD and Search
 
 ### Key Algorithm: Graph Expansion Search
 
@@ -325,15 +391,30 @@ final_scores = alpha * vector_scores + beta * graph_scores
 
 ---
 
-## 4. Future Work (What's Left)
+## 4. Future Work (What's Left to Implement)
 
 While the core is functional, several enhancements would make SageDB production-ready:
 
-1.  **Persistent Graph Storage**: Currently, the graph is rebuilt or loaded from a pickle file. A more robust disk-based graph format would be better for scale.
-2.  **Advanced Graph Algorithms**: Implementing PageRank or HITS for better centrality scoring.
-3.  **Multi-hop Reasoning**: The current search finds nodes but doesn't explicitly return the "path" of reasoning. Adding a "reasoning path" to the response would be a key feature.
-4.  **Schema Enforcement**: The current system is schema-less. Adding optional schema validation for node types and edge relations.
-5.  **Dockerization**: Containerizing the application for easier deployment.
+### High Priority
+1. **Multi-hop Reasoning Path**: Return the "path" of reasoning showing how the system traversed from query to result (e.g., "Query → Node A → Node B → Result"). Currently, we score based on proximity but don't expose the traversal path.
+
+2. **Relationship Filtering**: Allow users to filter search results by edge types (e.g., "show only `is_a` relationships"). The scoring infrastructure exists, filtering UI/API does not.
+
+3. **Dockerization**: Containerize the application for easier deployment and evaluation.
+
+### Medium Priority
+4. **Persistent Graph Storage**: Currently, the graph is rebuilt from SQLite or loaded from a pickle file. A more robust disk-based graph format (e.g., GraphML) would be better for scale.
+
+5. **Advanced Centrality Algorithms**: Replace simple Degree Centrality with PageRank or HITS for better importance scoring.
+
+6. **FAISS Index Upgrade**: Switch from `IndexFlatIP` (O(N) brute-force) to `IndexHNSW` (O(log N) approximate) for scalability beyond 100K nodes.
+
+### Low Priority
+7. **Schema Enforcement**: Optional schema validation for node types and allowed edge relations.
+
+8. **CLI Tool**: Command-line interface for scripted querying.
+
+9. **Streaming Ingestion**: Batch ingestion API for large datasets.
 
 ---
 
@@ -357,12 +438,21 @@ Configuration settings for the application.
 The entry point of the application.
 
 - **Imports**: Sets up logging and imports necessary modules.
-- **`rebuild_faiss_from_sqlite()`**: **NEW** - Automatically rebuilds the FAISS index from SQLite if they are out of sync. Iterates all nodes, regenerates embeddings, and reconstructs the vector index.
-- **Startup Logic**:
-  - Initializes the `DATA_DIR`.
-  - Calls `embedding_service.warmup()` to load the model into memory.
-  - Rebuilds the in-memory ID map from SQLite to ensure FAISS and SQLite are in sync.
-  - Performs an **Integrity Check** - if mismatch detected, calls `rebuild_faiss_from_sqlite()`.
+- **`rebuild_faiss_from_sqlite()`**: Automatically rebuilds the FAISS index from SQLite if they are out of sync:
+  - Iterates all nodes from SQLite
+  - Regenerates embeddings for each node using embedding_service
+  - Adds vectors to FAISS with correct IDs
+  - Rebuilds graph edges from SQLite
+  - Logs: "FAISS rebuild complete. Total vectors: N"
+- **`startup_event`** (FastAPI lifecycle):
+  1.  Creates `DATA_DIR` if missing.
+  2.  Cleans up incomplete `.tmp` snapshot files.
+  3.  Warms up the embedding model.
+  4.  Loads ID map from SQLite (`get_all_nodes_map`).
+  5.  Loads or creates FAISS index with the ID map.
+  6.  Loads or creates NetworkX graph.
+  7.  **Integrity Check**: Compares SQLite node count vs FAISS vector count. If mismatch, calls `rebuild_faiss_from_sqlite()`.
+  8.  Logs "System Ready."
 - **App Definition**: Creates the `FastAPI` app and includes the `router`.
 - **Server Run**: Uses `uvicorn.run` to start the server on port 8000.
 
@@ -370,23 +460,41 @@ The entry point of the application.
 
 Defines the HTTP endpoints.
 
-- **`create_node`**:
+- **`create_node`** (`POST /v1/nodes`):
   1.  Generates a UUID.
-  2.  Encodes text to vector.
-  3.  Writes to SQLite (Atomic ID), FAISS, and NetworkX.
+  2.  Encodes text to vector using embedding service.
+  3.  Writes to SQLite (returns Atomic ID), FAISS, and NetworkX.
   4.  Uses `@write_locked` to prevent race conditions.
-- **`get_node` / `delete_node`**: Standard CRUD operations interacting with all three storage layers.
-- **`create_edge`**: Adds a relationship to SQLite and NetworkX.
-- **`hybrid_search`** (**REWRITTEN**):
-  1.  Encodes the query.
+  
+- **`get_node`** (`GET /v1/nodes/{uuid}`): Retrieves a single node by UUID.
+
+- **`delete_node`** (`DELETE /v1/nodes/{uuid}`): Removes node from all three storage layers.
+
+- **`create_edge`** (`POST /v1/edges`): Adds a relationship to SQLite and NetworkX.
+
+- **`hybrid_search`** (`POST /v1/search/hybrid`) **CORE ALGORITHM**:
+  1.  Encodes the query to a vector.
   2.  Searches FAISS for top-50 seed candidates.
-  3.  **Expands** via graph BFS to depth 2 to discover related nodes.
-  4.  Computes vector similarity for newly discovered nodes.
-  5.  Calculates **relationship-aware** graph scores for all candidates.
-  6.  Calls `hybrid_fusion` to combine scores.
-  7.  Returns top-k with detailed scoring breakdown.
-- **`hybrid_search_legacy`**: **NEW** - Preserves the old re-ranking algorithm for comparison.
-- **`list_nodes` / `list_edges`**: Endpoints to fetch paginated lists of all data for the UI.
+  3.  **Graph Expansion**: Calls `expand_from_seeds(top_20_seeds, depth=2)` to discover related nodes.
+  4.  Computes vector similarity for newly discovered nodes via `batch_compute_similarity`.
+  5.  Hydrates all candidates with metadata from SQLite.
+  6.  Calculates **relationship-aware** graph scores using `calculate_expanded_graph_score`.
+  7.  Calls `hybrid_fusion` to combine scores with alpha/beta weights.
+  8.  Returns top-k with detailed scoring breakdown (vector_score, graph_score, raw_vector_score).
+
+- **`hybrid_search_legacy`** (`POST /v1/search/hybrid/legacy`): Original re-ranking algorithm (no graph expansion) preserved for comparison.
+
+- **`graph_search`** (`GET /v1/search/graph`): Returns subgraph for visualization via BFS.
+
+- **`run_benchmark`** (`POST /v1/benchmark`): Calculates Precision@K, Recall@K, NDCG@K for vector-only vs hybrid.
+
+- **`list_nodes`** (`GET /v1/nodes`): Paginated list of all nodes.
+
+- **`list_edges`** (`GET /v1/edges`): Paginated list of all edges.
+
+- **`health_check`** (`GET /health`): Returns node/edge counts and status.
+
+- **`create_snapshot`** (`POST /v1/admin/snapshot`): Persists FAISS and Graph to disk.
 
 ### `SageDB/core/embedding.py`
 
@@ -406,6 +514,11 @@ The brain of the hybrid search.
   - Takes vector results and graph scores.
   - **Normalizes** vector scores to a 0-1 range using Min-Max scaling.
   - Combines them using the formula: `alpha * vector + beta * graph`.
+  - Returns each result with full scoring breakdown:
+    - `score`: Final hybrid score
+    - `vector_score`: Normalized vector similarity (0-1)
+    - `graph_score`: Combined graph score (0-1)
+    - `raw_vector_score`: Original cosine similarity from FAISS
   - Sorts and returns the final ranked list.
 
 ### `SageDB/core/lock.py`
@@ -438,33 +551,58 @@ Manages the vector index.
 
 - **`VectorIndex`**: Wraps `faiss`.
 - **`_create_new_index`**: Uses `IndexFlatIP` (Inner Product) for cosine similarity. Wraps it in `IndexIDMap` to support custom IDs (mapped from SQLite).
-- **`add_vector`**: Adds a vector with a specific ID.
-- **`search`**: Returns distances and indices of the nearest neighbors.
-- **`compute_similarity`**: **NEW** - Computes cosine similarity between a query vector and a stored vector by ID.
-- **`batch_compute_similarity`**: **NEW** - Efficiently computes vector similarity for multiple target UUIDs (used for graph-discovered nodes).
+- **`add_vector(vector, faiss_id, uuid)`**: Adds a vector with a specific ID and updates the id_map.
+- **`remove_vector(faiss_id)`**: Removes vector by ID from both index and id_map.
+- **`search(query_vector, k)`**: Returns distances and UUIDs of the nearest neighbors.
+- **`get_vector_by_id(faiss_id)`**: Reconstructs a stored vector by its ID (for similarity computation).
+- **`compute_similarity(query_vector, target_uuid)`**: Computes cosine similarity between a query vector and a stored vector by UUID. Used for individual similarity calculations.
+- **`batch_compute_similarity(query_vector, target_uuids)`**: Efficiently computes vector similarity for multiple target UUIDs at once. Returns `Dict[uuid, similarity_score]`. Used for scoring graph-discovered nodes.
+- **`ntotal`**: Property returning total vectors in the index.
 
 ### `SageDB/storage/graph_ops.py`
 
 Manages the graph structure.
 
 - **`GraphManager`**: Wraps `networkx.DiGraph`.
-- **`expand_from_seeds(seeds, depth=2)`**: **NEW** - Performs BFS from seed nodes in both directions (predecessors + successors) to discover related nodes up to specified depth.
-- **`get_relationship_score(edge_type)`**: **NEW** - Returns weight for different edge types (is_a=1.0, part_of=0.95, related_to=0.5, etc.).
-- **`calculate_expanded_graph_score(node, seeds)`**: **NEW** - Computes connectivity score using weighted average distance (not minimum) with relationship-aware edge weights.
-- **`calculate_graph_score`** (Legacy):
-  - **Connectivity**: Uses `shortest_path_length` to seed nodes (minimum distance).
-  - **Centrality**: Uses Degree Centrality (in_degree + out_degree) normalized by max degree.
+- **`add_node(uuid)`**: Adds a node to the graph.
+- **`add_edge(source, target, relation, weight)`**: Adds a directed edge with metadata.
+- **`expand_from_seeds(seeds, depth=2)`**: **CORE INNOVATION** - Performs BFS from seed nodes in both directions (predecessors + successors) to discover related nodes up to specified depth. Uses `nx.single_source_shortest_path_length` for efficiency.
+- **`get_relationship_score(candidate, seeds)`**: Returns the maximum edge weight between candidate and any seed, using a predefined edge type hierarchy (is_a=1.0 → mentioned_in=0.3).
+- **`calculate_expanded_graph_score(node, seeds, seed_vector_scores)`**: **MAIN SCORING** - Computes comprehensive graph score:
+  - **Connectivity**: Weighted average distance to seeds (weighted by seed vector scores)
+  - **Centrality**: Degree centrality (in_degree + out_degree) / max_degree
+  - **Relationship**: Direct edge type strength
+  - **Combined**: `0.5*connectivity + 0.3*centrality + 0.2*relationship`
+- **`calculate_graph_score`** (Legacy): Simple min-distance connectivity score, kept for legacy endpoint.
+- **`get_bfs_subgraph`**: Returns nodes/edges within N hops of a start node for visualization.
 
 ### `SageDB/ui/app.py`
 
-The frontend dashboard.
+The frontend dashboard built with Streamlit.
 
-- **Streamlit**: Used for rapid UI development.
-- **Tabs**:
-  - **Add Data**: Forms for creating nodes/edges.
-  - **Search**: Interface for hybrid search with sliders for Alpha/Beta.
-  - **Graph View**: Uses `matplotlib` to draw the subgraph.
-  - **Data Explorer**: Displays raw data tables using `st.dataframe`.
+- **Configuration**: API_URL set to `http://localhost:8000`.
+- **Navigation Sidebar**: Page selector with 5 options.
+- **Pages**:
+  - **System Health**: Shows backend status and node/edge counts via `/health`.
+  - **Add Data**: 
+    - Tab 1: Form to create nodes (text, type, metadata JSON).
+    - Tab 2: Form to create edges (source UUID, target UUID, relation, weight).
+  - **Search**: 
+    - Text input for query.
+    - Sliders for Alpha (vector weight) and Beta (graph weight).
+    - Number input for top_k results.
+    - Results display with expandable cards showing:
+      - UUID, full text, metadata
+      - **Scoring Breakdown**: Vector Score, Graph Score, Hybrid Score in columns
+      - Score calculation formula display
+  - **Graph View**: 
+    - Input for start node UUID and depth slider.
+    - Matplotlib visualization using `nx.spring_layout`.
+    - Node labels show first 4 chars of UUID.
+    - Raw JSON data display.
+  - **Data Explorer**: 
+    - Tab 1: Button to fetch all nodes, displayed as dataframe.
+    - Tab 2: Button to fetch all edges, displayed as dataframe.
 
 ### `SageDB/populate_db.py`
 
@@ -738,46 +876,31 @@ Integration tests.
 - What's the time limit for the final presentation?
 - Should we focus on problem → solution → results, or dive deep into technical implementation?
 
-### Blockers & Concerns
+### Blockers & Current Status
 
-**~~Blocker 1: Graph Scoring Complexity~~ ✅ RESOLVED**
-- ~~Our current connectivity score uses **minimum distance** to seeds, which is fast but potentially inaccurate (doesn't account for distance to ALL seeds, only the closest one).~~
-- **IMPLEMENTED**: New algorithm uses:
-  - BFS expansion from seeds (bidirectional, depth=2)
-  - Weighted average distance across all reachable seeds
-  - Relationship-aware scoring (edge types affect weights)
-- **Impact**: Query latency increased slightly (~50ms) but accuracy significantly improved
+| Blocker | Status | Resolution |
+|---------|--------|------------|
+| Graph Scoring (min distance only) | ✅ RESOLVED | Implemented weighted average distance + relationship-aware scoring |
+| FAISS/SQLite Sync | ✅ RESOLVED | Auto-rebuild on startup via `rebuild_faiss_from_sqlite()` |
+| Graph Expansion (only re-ranking) | ✅ RESOLVED | BFS expansion discovers new candidates via `expand_from_seeds()` |
+| FAISS Index Type (O(N) brute-force) | ⚠️ KNOWN | Using `IndexFlatIP` for 100% recall. Switch to HNSW for >100K nodes |
+| In-Memory Graph (RAM limits) | ⚠️ KNOWN | NetworkX in-memory. Would need disk-based DB for >100K nodes |
+| Ground Truth for Benchmark | ⚠️ PENDING | `/v1/benchmark` endpoint ready, need labeled data |
+| CLI Tool | ❌ NOT STARTED | Web UI built, CLI is optional enhancement |
 
-**Blocker 2: FAISS Index Type**
-- We're using `IndexFlatIP` (brute-force search, 100% recall, O(N) complexity).
-- **Question**: Should we switch to `IndexHNSW` or `IndexIVFFlat` for better scalability, even if it introduces approximate results?
-- **Impact**: HNSW is faster but requires parameter tuning (M, efConstruction) that might not be optimal for small datasets.
-- **Note**: `IndexFlatIP` doesn't support vector reconstruction, causing warnings during batch similarity computation. This is handled gracefully with a fallback method.
+### Stretch Goals Progress
 
-**Blocker 3: In-Memory Graph Limitations**
-- NetworkX keeps the entire graph in RAM, which limits scalability.
-- **Question**: If the evaluation dataset is >100K nodes, should we switch to a disk-based graph DB (e.g., SQLite with recursive CTEs for traversal)?
-- **Impact**: Would require significant refactoring of `graph_ops.py`.
+| Goal | Status | Notes |
+|------|--------|-------|
+| Improve graph scoring (weighted avg distance) | ✅ DONE | `calculate_expanded_graph_score` |
+| Graph expansion algorithm | ✅ DONE | `expand_from_seeds` with BFS |
+| Relationship-aware scoring | ✅ DONE | `get_relationship_score` with edge type weights |
+| Auto-rebuild FAISS from SQLite | ✅ DONE | `rebuild_faiss_from_sqlite()` on startup |
+| Batch vector similarity | ✅ DONE | `batch_compute_similarity` for efficiency |
+| Multi-hop reasoning path | ❌ TODO | Show traversal path in results |
+| Relationship filtering | ❌ TODO | Filter by edge types in API |
+| CLI tool | ❌ TODO | For scripted querying |
+| Dockerization | ❌ TODO | For easy deployment |
+| Architecture diagram | ❌ TODO | Visual system overview |
 
-**Blocker 4: Lack of Ground Truth for Benchmark**
-- We have a `/v1/benchmark` endpoint that calculates Precision/Recall/NDCG, but we don't have labeled ground truth data.
-- **Question**: Will you provide ground truth for evaluation, or should we create our own (which might be subjective)?
-
-**Blocker 5: UI vs. CLI**
-- We built a Streamlit UI for visual demos, but the problem statement mentions "minimal UI or CLI."
-- **Question**: Is a web UI preferred, or should we also prepare a CLI tool for programmatic access?
-- **Impact**: Building a CLI would take ~2-3 hours.
-
-### Stretch Goals Prioritization
-
-If we have time before Round 2, which of these would add the most value?
-
-1. ~~**Improve graph scoring** (use average distance instead of minimum)~~ ✅ DONE
-2. **Implement multi-hop reasoning** (show the path from query to result)
-3. **Add relationship-weighted search** (filter by edge types like "is_a", "part_of") - ✅ PARTIALLY DONE (weights implemented, filtering TBD)
-4. **Build a CLI tool** for scripted querying
-5. **Add pagination for large result sets**
-6. **Dockerize the application** for easy setup
-7. **Create a detailed architecture diagram**
-
-**Question**: Which 2-3 of these would you prioritize for evaluation?
+**Question**: Which of the remaining items would you prioritize for evaluation?
