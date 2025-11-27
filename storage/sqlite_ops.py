@@ -166,4 +166,33 @@ class SQLiteManager:
         conn.close()
         return count
 
+    def get_all_nodes(self, limit: int = 100, offset: int = 0) -> List[Dict]:
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT uuid, faiss_id, text, type, metadata FROM nodes LIMIT ? OFFSET ?", (limit, offset))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [{
+            "uuid": row[0],
+            "faiss_id": row[1],
+            "text": row[2],
+            "type": row[3],
+            "metadata": json.loads(row[4]) if row[4] else {}
+        } for row in rows]
+
+    def get_all_edges(self, limit: int = 100, offset: int = 0) -> List[Dict]:
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT source_uuid, target_uuid, relation, weight FROM edges LIMIT ? OFFSET ?", (limit, offset))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [{
+            "source_id": row[0],
+            "target_id": row[1],
+            "relation": row[2],
+            "weight": row[3]
+        } for row in rows]
+
 sqlite_manager = SQLiteManager()

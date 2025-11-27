@@ -11,7 +11,7 @@ st.set_page_config(page_title="SageDB UI", layout="wide")
 st.title("SageDB: Vector + Graph Native Database")
 
 # Sidebar Navigation
-page = st.sidebar.selectbox("Navigation", ["Add Data", "Search", "Graph View", "System Health"])
+page = st.sidebar.selectbox("Navigation", ["Add Data", "Search", "Graph View", "Data Explorer", "System Health"])
 
 def check_health():
     try:
@@ -87,6 +87,8 @@ elif page == "Add Data":
 elif page == "Search":
     st.header("Hybrid Search")
     
+    st.info("Mechanism: Hybrid Score = (Alpha * Vector Similarity) + (Beta * Graph Centrality)")
+
     with st.form("search_form"):
         query = st.text_input("Search Query")
         col1, col2, col3 = st.columns(3)
@@ -117,7 +119,20 @@ elif page == "Search":
                     with st.expander(f"{item['score']:.4f} | {item['text'][:50]}..."):
                         st.write(f"**UUID:** `{item['uuid']}`")
                         st.write(f"**Text:** {item['text']}")
-                        st.write(f"**Scores:** Vector={item['vector_score']:.4f}, Graph={item['graph_score']:.4f}")
+                        
+                        # Visualization of the score components
+                        st.write("### Scoring Breakdown")
+                        col_a, col_b, col_c = st.columns(3)
+                        with col_a:
+                            st.metric("Vector Score", f"{item['vector_score']:.4f}")
+                        with col_b:
+                            st.metric("Graph Score", f"{item['graph_score']:.4f}")
+                        with col_c:
+                            final_score = (alpha * item['vector_score']) + (beta * item['graph_score'])
+                            st.metric("Hybrid Score", f"{final_score:.4f}")
+                        
+                        st.write(f"**Calculation:** `{alpha} * {item['vector_score']:.4f} + {beta} * {item['graph_score']:.4f} = {final_score:.4f}`")
+                        
                         st.json(item['metadata'])
             else:
                 st.error(f"Search Failed: {res.text}")
@@ -173,3 +188,37 @@ elif page == "Graph View":
                     st.error(f"Error: {res.text}")
         except Exception as e:
             st.error(f"Connection Error: {e}")
+
+# --- Page: Data Explorer ---
+elif page == "Data Explorer":
+    st.header("Data Explorer")
+    
+    tab1, tab2 = st.tabs(["Nodes", "Edges"])
+    
+    with tab1:
+        st.subheader("All Nodes")
+        if st.button("Refresh Nodes"):
+            try:
+                res = requests.get(f"{API_URL}/v1/nodes")
+                if res.status_code == 200:
+                    nodes = res.json()
+                    st.write(f"Total Nodes: {len(nodes)}")
+                    st.dataframe(nodes)
+                else:
+                    st.error(f"Error fetching nodes: {res.text}")
+            except Exception as e:
+                st.error(f"Connection Error: {e}")
+                
+    with tab2:
+        st.subheader("All Edges")
+        if st.button("Refresh Edges"):
+            try:
+                res = requests.get(f"{API_URL}/v1/edges")
+                if res.status_code == 200:
+                    edges = res.json()
+                    st.write(f"Total Edges: {len(edges)}")
+                    st.dataframe(edges)
+                else:
+                    st.error(f"Error fetching edges: {res.text}")
+            except Exception as e:
+                st.error(f"Connection Error: {e}")

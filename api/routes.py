@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
-from typing import List
+from typing import List, Dict
 import uuid
 import logging
 import os
@@ -208,3 +208,21 @@ def health_check():
         "nodes": sqlite_manager.count_nodes(),
         "edges": sqlite_manager.count_edges()
     }
+
+@router.get("/v1/nodes", response_model=List[Dict])
+@read_locked
+def list_nodes(limit: int = 100, offset: int = 0):
+    """List all nodes with pagination."""
+    try:
+        return sqlite_manager.get_all_nodes(limit, offset)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/v1/edges", response_model=List[Dict])
+@read_locked
+def list_edges(limit: int = 100, offset: int = 0):
+    """List all edges with pagination."""
+    try:
+        return sqlite_manager.get_all_edges(limit, offset)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
