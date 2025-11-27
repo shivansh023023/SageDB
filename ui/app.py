@@ -41,22 +41,28 @@ st.markdown("""
         display: none !important;
     }
     
+    /* Override Streamlit's default red/primary color everywhere */
+    :root {
+        --primary-color: #9d7cd8 !important;
+    }
+    
     /* Global font */
     html, body, [class*="st-"] {
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     
-    /* Main container - dark theme to match sidebar */
+    /* Main container - slate black theme */
     .stApp {
-        background: linear-gradient(135deg, #1a1f2e 0%, #0f172a 50%, #1e293b 100%) !important;
+        background: #0f0f0f !important;
     }
     
     .block-container {
-        padding-top: 1rem !important;
-        padding-bottom: 1rem !important;
-        padding-left: 2rem !important;
-        padding-right: 2rem !important;
-        max-width: 100% !important;
+        padding-top: 1.5rem !important;
+        padding-bottom: 1.5rem !important;
+        padding-left: 3rem !important;
+        padding-right: 3rem !important;
+        max-width: 1400px !important;
+        margin: 0 auto !important;
     }
     
     /* Reduce top padding/margin */
@@ -67,30 +73,41 @@ st.markdown("""
         padding-top: 1rem !important;
     }
     
-    /* Tighter spacing for elements */
+    /* Consistent spacing for elements */
     .element-container {
-        margin-bottom: 0.5rem !important;
+        margin-bottom: 0.75rem !important;
     }
     .stMarkdown {
-        margin-bottom: 0.25rem !important;
+        margin-bottom: 0.5rem !important;
     }
     
-    /* Gradient background for sidebar - seamless transition */
+    /* Gradient background for sidebar - slate black */
     section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0f172a 0%, #1e293b 50%, #252d3d 100%) !important;
-        border-right: 1px solid rgba(99, 102, 241, 0.2) !important;
-        box-shadow: 4px 0 20px rgba(0, 0, 0, 0.3) !important;
-        min-width: 220px !important;
+        background: #0a0a0a !important;
+        border-right: 1px solid rgba(157, 124, 216, 0.35) !important;
+        box-shadow: 4px 0 30px rgba(157, 124, 216, 0.2) !important;
+        min-width: 200px !important;
+        max-width: 400px !important;
         padding-top: 0 !important;
     }
+    /* Enable sidebar resize handle */
+    section[data-testid="stSidebar"] [data-testid="stSidebarResizeHandle"] {
+        display: block !important;
+        visibility: visible !important;
+        background: rgba(157, 124, 216, 0.35) !important;
+        width: 4px !important;
+    }
+    section[data-testid="stSidebar"] [data-testid="stSidebarResizeHandle"]:hover {
+        background: rgba(157, 124, 216, 0.6) !important;
+    }
     section[data-testid="stSidebar"] > div {
-        padding-top: 0.5rem !important;
+        padding: 1rem !important;
     }
     section[data-testid="stSidebar"] > div > div {
         padding-top: 0 !important;
     }
     section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
-        padding-top: 0.5rem !important;
+        padding: 0.5rem !important;
     }
     section[data-testid="stSidebar"] * {
         color: #e2e8f0 !important;
@@ -98,13 +115,24 @@ st.markdown("""
     section[data-testid="stSidebar"] .stRadio label {
         color: #e2e8f0 !important;
         transition: all 0.3s ease;
-        padding: 6px 10px !important;
+        padding: 10px 14px !important;
         border-radius: 8px !important;
-        margin-bottom: 2px !important;
+        margin-bottom: 4px !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        white-space: nowrap !important;
+    }
+    section[data-testid="stSidebar"] .stRadio label p {
+        margin: 0 !important;
+        padding: 0 !important;
+        display: inline !important;
+        line-height: 1 !important;
     }
     section[data-testid="stSidebar"] .stRadio label:hover {
         color: #ffffff !important;
-        background: rgba(99, 102, 241, 0.15) !important;
+        background: rgba(157, 124, 216, 0.2) !important;
+        box-shadow: 0 0 15px rgba(157, 124, 216, 0.35) !important;
     }
     section[data-testid="stSidebar"] h1, 
     section[data-testid="stSidebar"] h2, 
@@ -127,13 +155,13 @@ st.markdown("""
         color: #cbd5e1 !important;
     }
     
-    /* Glassmorphism cards - darker theme */
+    /* Glassmorphism cards - slate black */
     .stExpander {
-        background: rgba(30, 41, 59, 0.7) !important;
+        background: rgba(20, 20, 20, 0.8) !important;
         backdrop-filter: blur(10px);
-        border: 1px solid rgba(99, 102, 241, 0.2) !important;
+        border: 1px solid rgba(157, 124, 216, 0.25) !important;
         border-radius: 12px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+        box-shadow: 0 4px 20px rgba(157, 124, 216, 0.15), 0 0 30px rgba(130, 100, 200, 0.1) !important;
     }
     .stExpander summary p {
         color: #e2e8f0 !important;
@@ -166,7 +194,7 @@ st.markdown("""
     .stExpander summary::before {
         content: "▸ " !important;
         font-size: 12px !important;
-        color: #6366f1 !important;
+        color: #9d7cd8 !important;
     }
     .stExpander[open] summary::before {
         content: "▾ " !important;
@@ -178,14 +206,64 @@ st.markdown("""
         font-weight: 600;
         padding: 0.5rem 1.5rem;
         transition: all 0.2s ease;
-        border: none;
+        border: none !important;
+        outline: none !important;
+        background: linear-gradient(135deg, #7e5bbd 0%, #9d7cd8 100%) !important;
+        color: #ffffff !important;
+        box-shadow: 0 2px 15px rgba(157, 124, 216, 0.35) !important;
     }
     .stButton > button:hover {
         transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        box-shadow: 0 4px 25px rgba(157, 124, 216, 0.5), 0 0 40px rgba(130, 100, 200, 0.35) !important;
+        background: linear-gradient(135deg, #8e6dcd 0%, #b08fe8 100%) !important;
+        border: none !important;
+        outline: none !important;
     }
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    .stButton > button:active,
+    .stButton > button:focus,
+    .stButton > button:focus-visible {
+        background: linear-gradient(135deg, #7e5bbd 0%, #9d7cd8 100%) !important;
+        box-shadow: 0 2px 15px rgba(157, 124, 216, 0.4) !important;
+        border: none !important;
+        outline: none !important;
+    }
+    .stButton > button[kind="primary"],
+    .stButton > button[kind="secondary"],
+    [data-testid="stFormSubmitButton"] > button {
+        background: linear-gradient(135deg, #7e5bbd 0%, #9d7cd8 100%) !important;
+        box-shadow: 0 2px 15px rgba(157, 124, 216, 0.35) !important;
+        color: #ffffff !important;
+        border: none !important;
+        outline: none !important;
+    }
+    [data-testid="stFormSubmitButton"] > button:hover {
+        background: linear-gradient(135deg, #8e6dcd 0%, #b08fe8 100%) !important;
+        box-shadow: 0 4px 25px rgba(157, 124, 216, 0.5), 0 0 40px rgba(130, 100, 200, 0.35) !important;
+    }
+    [data-testid="stFormSubmitButton"] > button:focus,
+    [data-testid="stFormSubmitButton"] > button:focus-visible,
+    [data-testid="stFormSubmitButton"] > button:active {
+        border: none !important;
+        outline: none !important;
+        box-shadow: 0 2px 15px rgba(157, 124, 216, 0.4) !important;
+    }
+    
+    /* Override any red/primary colors globally */
+    [data-baseweb="base-input"]:focus-within {
+        border-color: #9d7cd8 !important;
+    }
+    .st-emotion-cache-1inwz65,
+    .st-emotion-cache-16idsys {
+        color: #9d7cd8 !important;
+    }
+    
+    /* Remove red focus rings globally */
+    button:focus, button:focus-visible {
+        outline: none !important;
+        border-color: #9d7cd8 !important;
+    }
+    *:focus {
+        outline-color: #9d7cd8 !important;
     }
     
     /* Metrics - dark theme */
@@ -199,33 +277,33 @@ st.markdown("""
         color: #94a3b8 !important;
     }
     
-    /* Modern alerts - dark theme */
+    /* Modern alerts - slate black */
     .stAlert {
         border-radius: 12px;
         border: none;
-        background: rgba(30, 41, 59, 0.8) !important;
+        background: rgba(20, 20, 20, 0.9) !important;
     }
     .stSuccess {
-        background: rgba(16, 185, 129, 0.15) !important;
-        border-left: 4px solid #10b981 !important;
+        background: rgba(20, 20, 20, 0.9) !important;
+        border-left: 4px solid #9d7cd8 !important;
     }
     .stError {
-        background: rgba(239, 68, 68, 0.15) !important;
-        border-left: 4px solid #ef4444 !important;
+        background: rgba(20, 20, 20, 0.9) !important;
+        border-left: 4px solid #8a7a8a !important;
     }
     .stWarning {
-        background: rgba(245, 158, 11, 0.15) !important;
-        border-left: 4px solid #f59e0b !important;
+        background: rgba(20, 20, 20, 0.9) !important;
+        border-left: 4px solid #9a9080 !important;
     }
     .stInfo {
-        background: rgba(99, 102, 241, 0.15) !important;
-        border-left: 4px solid #6366f1 !important;
+        background: rgba(20, 20, 20, 0.9) !important;
+        border-left: 4px solid #9d7cd8 !important;
     }
     
-    /* Tabs styling - dark theme */
+    /* Tabs styling - slate black */
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
-        background: rgba(30, 41, 59, 0.5) !important;
+        background: rgba(15, 15, 15, 0.8) !important;
         border-radius: 10px;
         padding: 4px;
     }
@@ -236,71 +314,95 @@ st.markdown("""
         color: #94a3b8 !important;
     }
     .stTabs [data-baseweb="tab"][aria-selected="true"] {
-        background: rgba(99, 102, 241, 0.2) !important;
+        background: rgba(157, 124, 216, 0.2) !important;
         color: #f1f5f9 !important;
+        box-shadow: 0 0 15px rgba(157, 124, 216, 0.35) !important;
     }
     
-    /* Input fields - dark theme */
+    /* Input fields - slate black */
     .stTextInput > div > div > input,
     .stTextArea > div > div > textarea {
         border-radius: 8px;
-        border: 2px solid #334155 !important;
-        background: rgba(30, 41, 59, 0.8) !important;
+        border: 2px solid #2a2a2a !important;
+        background: rgba(15, 15, 15, 0.9) !important;
         color: #f1f5f9 !important;
         transition: border-color 0.2s ease;
     }
     .stTextInput > div > div > input:focus,
     .stTextArea > div > div > textarea:focus {
-        border-color: #6366f1 !important;
-        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2) !important;
+        border-color: #9d7cd8 !important;
+        box-shadow: 0 0 0 3px rgba(157, 124, 216, 0.25), 0 0 20px rgba(130, 100, 200, 0.3) !important;
     }
     .stTextInput > div > div > input::placeholder,
     .stTextArea > div > div > textarea::placeholder {
         color: #64748b !important;
     }
     
-    /* Dividers - dark theme */
+    /* Dividers - slate */
     hr {
         border: none;
         height: 1px;
-        background: linear-gradient(90deg, transparent, #334155, transparent) !important;
+        background: linear-gradient(90deg, transparent, #2a2a2a, transparent) !important;
         margin: 1.5rem 0;
     }
     .stDivider {
-        background: linear-gradient(90deg, transparent, #334155, transparent) !important;
+        background: linear-gradient(90deg, transparent, #2a2a2a, transparent) !important;
     }
     
-    /* Dataframe styling - dark theme */
+    /* Dataframe styling - slate black */
     .stDataFrame {
         border-radius: 12px;
         overflow: hidden;
     }
     .stDataFrame [data-testid="stDataFrameResizable"] {
-        background: rgba(30, 41, 59, 0.8) !important;
+        background: rgba(15, 15, 15, 0.9) !important;
     }
     
-    /* Select boxes - dark theme */
+    /* Select boxes - slate black */
     [data-baseweb="select"] {
-        background: rgba(30, 41, 59, 0.8) !important;
+        background: rgba(15, 15, 15, 0.9) !important;
     }
     [data-baseweb="select"] > div {
-        background: rgba(30, 41, 59, 0.8) !important;
-        border-color: #334155 !important;
+        background: rgba(15, 15, 15, 0.9) !important;
+        border-color: #2a2a2a !important;
     }
     
-    /* Number inputs - dark theme */
+    /* Number inputs - slate black */
     .stNumberInput > div > div > input {
-        background: rgba(30, 41, 59, 0.8) !important;
-        border-color: #334155 !important;
+        background: rgba(15, 15, 15, 0.9) !important;
+        border-color: #2a2a2a !important;
         color: #f1f5f9 !important;
     }
     
-    /* Sliders - purple accent */
+    /* Sliders - slate with purple accent */
     .stSlider [data-baseweb="slider"] {
-        background: #334155 !important;
+        background: #1a1a1a !important;
     }
     .stSlider [role="slider"] {
-        background: #6366f1 !important;
+        background: #9d7cd8 !important;
+        border: none !important;
+        box-shadow: 0 0 12px rgba(157, 124, 216, 0.5) !important;
+    }
+    .stSlider [data-testid="stThumbValue"] {
+        color: #9d7cd8 !important;
+    }
+    /* Slider track - override red default */
+    .stSlider [data-baseweb="slider"] > div > div {
+        background: #2a2a2a !important;
+    }
+    .stSlider [data-baseweb="slider"] > div > div > div {
+        background: linear-gradient(90deg, #7e5bbd, #9d7cd8) !important;
+    }
+    /* Remove slider thumb border/outline */
+    .stSlider div[role="slider"]:focus,
+    .stSlider div[role="slider"]:active,
+    .stSlider div[role="slider"]:hover {
+        border: none !important;
+        outline: none !important;
+        box-shadow: 0 0 20px rgba(157, 124, 216, 0.6), 0 0 35px rgba(130, 100, 200, 0.4) !important;
+    }
+    .stSlider [data-baseweb="slider"] div {
+        border: none !important;
     }
     
     /* Radio buttons */
@@ -313,23 +415,25 @@ st.markdown("""
         color: #cbd5e1 !important;
     }
     
-    /* File uploader - dark theme */
+    /* File uploader - slate black */
     [data-testid="stFileUploader"] {
-        background: rgba(30, 41, 59, 0.5) !important;
-        border: 2px dashed #334155 !important;
+        background: rgba(15, 15, 15, 0.8) !important;
+        border: 2px dashed #2a2a2a !important;
         border-radius: 12px !important;
         padding: 1rem !important;
     }
     [data-testid="stFileUploader"]:hover {
-        border-color: #6366f1 !important;
+        border-color: #9d7cd8 !important;
+        box-shadow: 0 0 20px rgba(157, 124, 216, 0.3) !important;
     }
     
-    /* Forms - dark theme, compact */
+    /* Forms - slate black */
     [data-testid="stForm"] {
-        background: rgba(30, 41, 59, 0.5) !important;
-        border: 1px solid #334155 !important;
+        background: rgba(15, 15, 15, 0.8) !important;
+        border: 1px solid rgba(157, 124, 216, 0.18) !important;
         border-radius: 12px !important;
         padding: 1rem !important;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), 0 0 30px rgba(157, 124, 216, 0.1) !important;
     }
     
     /* Compact dividers */
@@ -375,6 +479,32 @@ st.markdown("""
         margin-bottom: 0.5rem !important;
     }
     
+    /* Symmetry fixes for columns */
+    [data-testid="stHorizontalBlock"] {
+        gap: 1rem !important;
+        align-items: stretch !important;
+    }
+    [data-testid="stColumn"] {
+        padding: 0 !important;
+    }
+    [data-testid="stColumn"] > div {
+        width: 100% !important;
+    }
+    
+    /* Center content in forms */
+    [data-testid="stForm"] > div {
+        display: flex;
+        flex-direction: column;
+    }
+    
+    /* Symmetric metric cards */
+    [data-testid="stMetricValue"] {
+        text-align: center !important;
+    }
+    [data-testid="stMetricLabel"] {
+        text-align: center !important;
+    }
+    
     /* === HIDE SIDEBAR COLLAPSE BUTTONS COMPLETELY === */
     [data-testid="collapsedControl"],
     [data-testid="stSidebarCollapseButton"],
@@ -389,11 +519,23 @@ st.markdown("""
         display: none !important;
         visibility: hidden !important;
     }
+    
+    /* Title centering option - left align for modern feel */
+    .main h1:first-of-type {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+    }
+    
+    /* Consistent column gaps */
+    .row-widget.stHorizontalBlock {
+        gap: 1rem !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🧠 SageDB")
 st.caption("Vector + Graph Native Database")
+st.divider()
 
 # Sidebar Navigation
 st.sidebar.markdown("### Navigation")
