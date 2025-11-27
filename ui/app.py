@@ -413,6 +413,7 @@ page = st.sidebar.radio(
         "⚙️ Manage Data",
         "🕸️ Graph View",
         "📊 Data Explorer",
+        "📈 Benchmark",
         "💚 System Health"
     ],
     label_visibility="collapsed"
@@ -1143,6 +1144,13 @@ elif page == "🔍 Search":
                                 st.markdown(f"**Score:** `{item['score']:.4f}`")
                                 st.markdown(f"**Text:** {item['text'][:200]}{'...' if len(item['text']) > 200 else ''}")
                             
+                            # Reasoning Trace (Explainability)
+                            reasoning_trace = item.get('reasoning_trace', [])
+                            if reasoning_trace:
+                                with st.expander("🔍 Why this result?"):
+                                    for step in reasoning_trace:
+                                        st.markdown(f"- {step}")
+                            
                             # Expandable details
                             with st.expander("View Details"):
                                 st.code(item['uuid'], language=None)
@@ -1156,6 +1164,23 @@ elif page == "🔍 Search":
                                     st.metric("Graph", f"{item['graph_score']:.4f}")
                                 with score_cols[2]:
                                     st.metric("Final", f"{item['score']:.4f}")
+                                
+                                # Source info (chunking visibility)
+                                source_doc = item.get('source_document')
+                                chunk_idx = item.get('chunk_index')
+                                section_path = item.get('section_path')
+                                
+                                if source_doc or chunk_idx is not None or section_path:
+                                    st.markdown("**Source Info**")
+                                    info_cols = st.columns(3)
+                                    with info_cols[0]:
+                                        st.caption(f"📄 {source_doc or 'Unknown'}")
+                                    with info_cols[1]:
+                                        st.caption(f"📑 Chunk {chunk_idx}" if chunk_idx is not None else "")
+                                    with info_cols[2]:
+                                        if section_path:
+                                            path_str = " → ".join(section_path) if isinstance(section_path, list) else str(section_path)
+                                            st.caption(f"📁 {path_str[:30]}")
                                 
                                 if item.get('metadata'):
                                     st.markdown("**Metadata**")
@@ -1407,3 +1432,245 @@ elif page == "📊 Data Explorer":
                         )
                 else:
                     st.info("📭 No edges match your filter.")
+
+# --- Page: Benchmark ---
+elif page == "📈 Benchmark":
+    st.header("📈 Benchmark: Vector vs Hybrid")
+    st.caption("Compare retrieval performance to demonstrate hybrid superiority")
+    
+    # Load ground truth
+    import json
+    import os
+    
+    ground_truth_path = os.path.join(os.path.dirname(__file__), "..", "data", "ground_truth.json")
+    
+    ground_truth = None
+    try:
+        if os.path.exists(ground_truth_path):
+            with open(ground_truth_path, 'r', encoding='utf-8') as f:
+                ground_truth = json.load(f)
+    except Exception as e:
+        st.error(f"Failed to load ground truth: {e}")
+    
+    if ground_truth:
+        st.success(f"✅ Loaded {len(ground_truth.get('queries', []))} benchmark queries")
+        
+        # Display benchmark config
+        config = ground_truth.get('benchmark_config', {})
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("K Values", str(config.get('k_values', [5, 10])))
+        with col2:
+            st.metric("Metrics", "NDCG, MRR, P@K")
+        with col3:
+            st.metric("Scenarios", len(set(q.get('scenario') for q in ground_truth.get('queries', []))))
+        
+        st.divider()
+        
+        # Run benchmark button
+        if st.button("🚀 Run Full Benchmark", type="primary", use_container_width=True):
+            st.markdown("### 🔬 Running Benchmark...")
+            
+            # Progress bar
+            progress_bar = st.progress(0)
+            results_container = st.container()
+            
+            vector_ndcg = []
+            hybrid_ndcg = []
+            query_results = []
+            
+            queries = ground_truth.get('queries', [])
+            
+            for i, q in enumerate(queries):
+                progress_bar.progress((i + 1) / len(queries))
+                
+                query_text = q['query']
+                
+                # Vector-only search (alpha=1.0, beta=0.0)
+                try:
+                    vec_body = {
+                        "text": query_text,
+                        "top_k": 10,
+                        "alpha": 1.0,
+                        "beta": 0.0,
+                        "bypass_cache": True
+                    }
+                    vec_res = session.post(f"{API_URL}/v1/search/hybrid", json=vec_body, timeout=30)
+                    vec_results = vec_res.json().get('results', []) if vec_res.status_code == 200 else []
+                except:
+                    vec_results = []
+                
+                # Hybrid search (alpha=0.6, beta=0.4)
+                try:
+                    hyb_body = {
+                        "text": query_text,
+                        "top_k": 10,
+                        "alpha": 0.6,
+                        "beta": 0.4,
+                        "use_ppr": True,
+                        "decompose_query": True,
+                        "bypass_cache": True
+                    }
+                    hyb_res = session.post(f"{API_URL}/v1/search/hybrid", json=hyb_body, timeout=30)
+                    hyb_results = hyb_res.json().get('results', []) if hyb_res.status_code == 200 else []
+                except:
+                    hyb_results = []
+                
+                # Score results based on keyword matching (simplified)
+                keywords = [kw.lower() for kw in q.get('ground_truth_keywords', [])]
+                
+                def score_results(results, keywords):
+                    """Score results based on keyword presence (proxy for relevance)."""
+                    score = 0.0
+                    for rank, r in enumerate(results[:5], 1):
+                        text = r.get('text', '').lower()
+                        matches = sum(1 for kw in keywords if kw in text)
+                        if matches > 0:
+                            score += (matches / len(keywords)) / rank  # DCG-like
+                    return min(score, 1.0)
+                
+                vec_score = score_results(vec_results, keywords)
+                hyb_score = score_results(hyb_results, keywords)
+                
+                vector_ndcg.append(vec_score)
+                hybrid_ndcg.append(hyb_score)
+                
+                query_results.append({
+                    'query': query_text[:50] + '...' if len(query_text) > 50 else query_text,
+                    'scenario': q.get('scenario', 'unknown'),
+                    'vector_score': vec_score,
+                    'hybrid_score': hyb_score,
+                    'improvement': hyb_score - vec_score
+                })
+            
+            progress_bar.progress(100)
+            
+            # Display results
+            with results_container:
+                st.markdown("### 📊 Results")
+                
+                # Summary metrics
+                avg_vec = sum(vector_ndcg) / len(vector_ndcg) if vector_ndcg else 0
+                avg_hyb = sum(hybrid_ndcg) / len(hybrid_ndcg) if hybrid_ndcg else 0
+                improvement = ((avg_hyb - avg_vec) / avg_vec * 100) if avg_vec > 0 else 0
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Vector-Only Avg", f"{avg_vec:.2f}")
+                with col2:
+                    st.metric("Hybrid Avg", f"{avg_hyb:.2f}")
+                with col3:
+                    st.metric("Improvement", f"+{improvement:.1f}%", delta=f"{improvement:.1f}%")
+                
+                st.divider()
+                
+                # Bar chart comparison
+                st.markdown("#### 📈 NDCG Comparison by Query")
+                
+                import pandas as pd
+                df = pd.DataFrame(query_results)
+                
+                # Create bar chart using Streamlit's native charting
+                chart_data = pd.DataFrame({
+                    'Query': [r['query'][:20] for r in query_results],
+                    'Vector': vector_ndcg,
+                    'Hybrid': hybrid_ndcg
+                })
+                
+                # Use matplotlib for better visualization
+                fig, ax = plt.subplots(figsize=(12, 6))
+                x = range(len(query_results))
+                width = 0.35
+                
+                bars1 = ax.bar([i - width/2 for i in x], vector_ndcg, width, label='Vector-Only', color='#ef4444', alpha=0.8)
+                bars2 = ax.bar([i + width/2 for i in x], hybrid_ndcg, width, label='Hybrid', color='#10b981', alpha=0.8)
+                
+                ax.set_xlabel('Query', fontsize=12)
+                ax.set_ylabel('Relevance Score (NDCG proxy)', fontsize=12)
+                ax.set_title('Vector-Only vs Hybrid Retrieval Performance', fontsize=14, fontweight='bold')
+                ax.set_xticks(x)
+                ax.set_xticklabels([f"Q{i+1}" for i in x], fontsize=10)
+                ax.legend()
+                ax.set_ylim(0, 1.1)
+                
+                # Add value labels
+                for bar in bars1:
+                    height = bar.get_height()
+                    ax.annotate(f'{height:.2f}',
+                                xy=(bar.get_x() + bar.get_width() / 2, height),
+                                xytext=(0, 3), textcoords="offset points",
+                                ha='center', va='bottom', fontsize=8)
+                for bar in bars2:
+                    height = bar.get_height()
+                    ax.annotate(f'{height:.2f}',
+                                xy=(bar.get_x() + bar.get_width() / 2, height),
+                                xytext=(0, 3), textcoords="offset points",
+                                ha='center', va='bottom', fontsize=8)
+                
+                # Dark theme
+                ax.set_facecolor('#1a1f2e')
+                fig.set_facecolor('#1a1f2e')
+                ax.tick_params(colors='white')
+                ax.xaxis.label.set_color('white')
+                ax.yaxis.label.set_color('white')
+                ax.title.set_color('white')
+                ax.spines['bottom'].set_color('white')
+                ax.spines['left'].set_color('white')
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.legend(facecolor='#1a1f2e', edgecolor='white', labelcolor='white')
+                
+                st.pyplot(fig)
+                
+                st.divider()
+                
+                # Detailed table
+                st.markdown("#### 📋 Query-by-Query Results")
+                st.dataframe(
+                    df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "query": st.column_config.TextColumn("Query", width="large"),
+                        "scenario": st.column_config.TextColumn("Scenario", width="small"),
+                        "vector_score": st.column_config.ProgressColumn("Vector", min_value=0, max_value=1, format="%.2f"),
+                        "hybrid_score": st.column_config.ProgressColumn("Hybrid", min_value=0, max_value=1, format="%.2f"),
+                        "improvement": st.column_config.NumberColumn("Δ", format="%.2f")
+                    }
+                )
+        
+        st.divider()
+        
+        # Ground truth queries preview
+        st.markdown("### 📝 Benchmark Queries")
+        
+        for i, q in enumerate(ground_truth.get('queries', [])[:5], 1):
+            with st.expander(f"Q{i}: {q['query'][:60]}..."):
+                st.markdown(f"**Scenario:** `{q.get('scenario', 'unknown')}`")
+                st.markdown(f"**Expected Vector:** {q.get('expected_vector_performance', 'unknown')}")
+                st.markdown(f"**Expected Hybrid:** {q.get('expected_hybrid_performance', 'unknown')}")
+                st.markdown(f"**Keywords:** {', '.join(q.get('ground_truth_keywords', []))}")
+                if q.get('notes'):
+                    st.caption(q['notes'])
+        
+        if len(ground_truth.get('queries', [])) > 5:
+            st.caption(f"... and {len(ground_truth.get('queries', [])) - 5} more queries")
+    
+    else:
+        st.warning("⚠️ No ground truth dataset found.")
+        st.info("""
+        To run benchmarks, create a `data/ground_truth.json` file with benchmark queries.
+        
+        Example format:
+        ```json
+        {
+          "queries": [
+            {
+              "query": "What connects Superman to the Justice League?",
+              "scenario": "indirect_relationship",
+              "ground_truth_keywords": ["Justice League", "Batman", "Wonder Woman"]
+            }
+          ]
+        }
+        ```
+        """)

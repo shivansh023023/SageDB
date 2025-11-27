@@ -532,7 +532,9 @@ def _execute_single_search(
         all_candidates, 
         graph_scores, 
         alpha=alpha, 
-        beta=beta
+        beta=beta,
+        use_ppr=use_ppr,
+        seed_uuids=top_seeds
     )
     timings['fusion'] = (_time.time() - _t8) * 1000
     

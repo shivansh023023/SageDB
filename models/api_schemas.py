@@ -142,6 +142,15 @@ class SearchResult(BaseModel):
     char_offset: Optional[int] = Field(None, description="Character offset in original document")
     # Provenance tracking
     retrieval_rank: Optional[int] = Field(None, description="Rank in which this result was retrieved")
+    # Reasoning trace for explainability
+    reasoning_trace: Optional[List[str]] = Field(None, description="Step-by-step reasoning path showing how this result was found")
+
+
+class ReasoningStep(BaseModel):
+    """A single step in the reasoning trace."""
+    step_type: str = Field(..., description="Type: 'vector_match', 'graph_hop', 'ppr_boost', 'section_link'")
+    description: str = Field(..., description="Human-readable explanation")
+    score_contribution: Optional[float] = Field(None, description="Score contribution from this step")
 
 
 class ChunkProvenance(BaseModel):

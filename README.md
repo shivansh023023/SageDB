@@ -92,23 +92,49 @@ Visit `http://localhost:8000/docs` for the interactive Swagger UI.
 
 ## 🧪 Architecture
 
+The following diagram shows SageDB's complete data flow from ingestion to retrieval:
+
 ```mermaid
-graph LR
-    User[User Input] --> Embed[Embedding Model]
-    Embed --> SQLite[(SQLite\nSource of Truth)]
-    SQLite --> FAISS[FAISS HNSW Index]
-    SQLite --> Graph[NetworkX Graph\n+ PageRank]
-
-    Query[Query] --> Embed
-    Embed --> FAISS
-    FAISS --> Candidates[Candidates]
-    Candidates --> GraphScoring[PageRank Scoring]
-    GraphScoring --> Fusion[Hybrid Fusion]
-    Fusion --> Results[Final Results]
-
-    Graph --> GraphML[(GraphML File)]
-    FAISS --> Index[(FAISS Index File)]
+flowchart TB
+    subgraph INGESTION["📥 INGESTION PIPELINE"]
+        File["📄 Document\n(PDF, TXT, MD)"] --> Chunker["✂️ Semantic Chunker\n(Header-aware)"]
+        Chunker --> Chunks["📦 Chunks\n+ Metadata"]
+    end
+    
+    subgraph STORAGE["💾 TRIPLE STORAGE (Atomic)"]
+        Chunks --> SQLite[("🗄️ SQLite\n(Source of Truth)")]
+        SQLite --> FAISS["🔍 FAISS\n(HNSW Index)"]
+        SQLite --> Graph["🕸️ NetworkX\n(DiGraph)"]
+    end
+    
+    subgraph RETRIEVAL["🔎 HYBRID RETRIEVAL"]
+        Query["🔤 Query"] --> Embed["🧠 Embedding\n(MiniLM-L6-v2)"]
+        Embed --> VectorSearch["📐 Vector Search\n(Top-K Seeds)"]
+        VectorSearch --> Expand["🌐 Graph Expansion\n(2-hop BFS)"]
+        Expand --> PPR["⭐ Personalized\nPageRank"]
+        PPR --> Fusion["⚡ Late Fusion\nα·Vector + β·Graph"]
+    end
+    
+    subgraph OUTPUT["📤 OUTPUT"]
+        Fusion --> Dedup["🧹 Deduplication\n(Hash + Semantic)"]
+        Dedup --> Results["📊 Ranked Results\n+ Reasoning Trace"]
+    end
+    
+    FAISS -.-> VectorSearch
+    Graph -.-> Expand
+    Graph -.-> PPR
 ```
+
+### Data Flow Explanation
+
+1. **Ingestion**: Documents are split into semantic chunks using header-aware chunking
+2. **Storage**: Chunks are atomically written to SQLite (source of truth), then indexed in FAISS (vectors) and NetworkX (graph)
+3. **Retrieval**: 
+   - Query → Embedding → Vector search finds initial "seed" candidates
+   - Graph expansion explores 2-hop neighborhood of seeds
+   - Personalized PageRank scores nodes based on query relevance
+   - Late fusion combines vector similarity (α) with graph importance (β)
+4. **Output**: Results are deduplicated and returned with reasoning traces
 
 ## 🔬 Scalability Deep Dive
 
@@ -134,6 +160,18 @@ Instead of simple degree centrality, we use Google's PageRank algorithm:
 - Preserves all node/edge attributes
 - No pickle security vulnerabilities
 - Cross-platform compatible
+
+## 🚀 Production RAG Features
+
+| Feature | Description | Benefit |
+|---------|-------------|---------|
+| **Personalized PageRank** | Query-aware graph scoring | Better relevance for structural queries |
+| **Query Decomposition** | Splits complex queries (e.g., "Compare X and Y") | Handles multi-entity questions |
+| **RRF Fusion** | Reciprocal Rank Fusion for sub-queries | Prevents garbage dilution |
+| **Search Cache** | LRU cache with 5-min TTL | ~100x faster for repeated queries |
+| **Semantic Dedup** | Hash + cosine similarity | Removes near-duplicates |
+| **Reasoning Trace** | Step-by-step retrieval explanation | Explainable AI for judges |
+| **Streaming Search** | SSE endpoint for real-time results | Better UX for large result sets |
 
 ## ⚖️ License
 

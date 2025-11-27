@@ -93,15 +93,37 @@ def deduplicate_by_text_hash(results: List[Dict[str, Any]]) -> List[Dict[str, An
 # QUERY DECOMPOSITION
 # ============================================
 
+def _extract_trailing_attribute(text: str) -> Tuple[str, Optional[str]]:
+    """
+    Extract trailing attribute from a phrase.
+    E.g., "superman's education" -> ("superman", "education")
+         "osama bin laden" -> ("osama bin laden", None)
+    """
+    # Pattern: X's attribute or X attribute (possessive or direct)
+    possessive = re.match(r"(.+?)'s\s+(\w+)$", text, re.IGNORECASE)
+    if possessive:
+        return possessive.group(1).strip(), possessive.group(2).strip()
+    
+    # Check for common trailing attributes (education, history, powers, etc.)
+    common_attrs = r'\b(education|history|background|powers|abilities|origin|biography|life|career|family|death|legacy)\b'
+    attr_match = re.search(common_attrs + r'\s*$', text, re.IGNORECASE)
+    if attr_match:
+        entity = text[:attr_match.start()].strip()
+        attr = attr_match.group(1)
+        return entity, attr
+    
+    return text, None
+
+
 def decompose_query(query: str) -> List[str]:
     """
     Decompose a complex query into simpler sub-queries.
     
     Handles patterns like:
     - "Compare X and Y" -> ["X", "Y"]
-    - "What is X and how does it relate to Y" -> ["What is X", "how does it relate to Y"]
+    - "Compare X and Y's education" -> ["X education", "Y education"] (distributive!)
     - "X vs Y" -> ["X", "Y"]
-    - Questions with "and", "or" conjunctions
+    - "What is X and how does it relate to Y" -> ["What is X", "how does it relate to Y"]
     
     Args:
         query: The original query string
@@ -111,20 +133,47 @@ def decompose_query(query: str) -> List[str]:
     """
     sub_queries = []
     
-    # Pattern 1: "Compare X and Y" or "Compare X with Y"
-    compare_match = re.match(r'compare\s+(.+?)\s+(?:and|with|to|vs\.?)\s+(.+)', query, re.IGNORECASE)
+    # Pattern 1: "Compare X and Y['s] [attribute]" (distributive attribute handling)
+    compare_match = re.match(
+        r'compare\s+(.+?)\s+(?:and|with|to|vs\.?)\s+(.+)', 
+        query, 
+        re.IGNORECASE
+    )
     if compare_match:
-        sub_queries.append(compare_match.group(1).strip())
-        sub_queries.append(compare_match.group(2).strip())
-        logger.info(f"Query decomposed (compare): {query} -> {sub_queries}")
+        entity1 = compare_match.group(1).strip()
+        entity2_with_attr = compare_match.group(2).strip()
+        
+        # Check if entity2 has a trailing attribute that should distribute
+        entity2, attr = _extract_trailing_attribute(entity2_with_attr)
+        
+        if attr:
+            # Distributive: "Compare X and Y's education" -> ["X education", "Y education"]
+            sub_queries.append(f"{entity1} {attr}")
+            sub_queries.append(f"{entity2} {attr}")
+            logger.info(f"Query decomposed (compare+distributive): {query} -> {sub_queries}")
+        else:
+            # Standard: "Compare X and Y" -> ["X", "Y"]
+            sub_queries.append(entity1)
+            sub_queries.append(entity2)
+            logger.info(f"Query decomposed (compare): {query} -> {sub_queries}")
         return sub_queries
     
-    # Pattern 2: "X vs Y" or "X versus Y"
+    # Pattern 2: "X vs Y" or "X versus Y" with distributive attribute
     vs_match = re.match(r'(.+?)\s+(?:vs\.?|versus)\s+(.+)', query, re.IGNORECASE)
     if vs_match:
-        sub_queries.append(vs_match.group(1).strip())
-        sub_queries.append(vs_match.group(2).strip())
-        logger.info(f"Query decomposed (vs): {query} -> {sub_queries}")
+        entity1 = vs_match.group(1).strip()
+        entity2_with_attr = vs_match.group(2).strip()
+        
+        entity2, attr = _extract_trailing_attribute(entity2_with_attr)
+        
+        if attr:
+            sub_queries.append(f"{entity1} {attr}")
+            sub_queries.append(f"{entity2} {attr}")
+            logger.info(f"Query decomposed (vs+distributive): {query} -> {sub_queries}")
+        else:
+            sub_queries.append(entity1)
+            sub_queries.append(entity2)
+            logger.info(f"Query decomposed (vs): {query} -> {sub_queries}")
         return sub_queries
     
     # Pattern 3: "What is X and what is Y" - split on "and what/how/why"
@@ -154,14 +203,23 @@ def decompose_query(query: str) -> List[str]:
 
 def merge_sub_query_results(
     all_results: List[List[Dict[str, Any]]],
-    top_k: int = 10
+    top_k: int = 10,
+    k_constant: int = 60
 ) -> List[Dict[str, Any]]:
     """
-    Merge results from multiple sub-queries using Round-Robin + score fusion.
+    Merge results from multiple sub-queries using Reciprocal Rank Fusion (RRF).
+    
+    RRF Formula: score = Σ (1 / (k + rank_i))
+    
+    RRF advantages over simple averaging:
+    - Penalizes results that only appear in one list
+    - Rank-based (position matters more than raw score)
+    - Robust to score scale differences between sub-queries
     
     Args:
         all_results: List of result lists, one per sub-query
         top_k: Number of final results to return
+        k_constant: RRF constant (default 60, standard in literature)
         
     Returns:
         Merged and ranked results
@@ -172,45 +230,42 @@ def merge_sub_query_results(
     if len(all_results) == 1:
         return all_results[0][:top_k]
     
-    # Track seen UUIDs to avoid duplicates
-    seen_uuids = set()
-    merged = []
+    # Track RRF scores and result data
+    rrf_scores: Dict[str, float] = {}
+    result_map: Dict[str, Dict[str, Any]] = {}
+    subquery_attribution: Dict[str, List[int]] = {}  # Track which sub-queries found each result
     
-    # Score map for fusion (uuid -> list of scores from different sub-queries)
-    score_map = {}
-    result_map = {}
-    
-    # Collect all scores
-    for results in all_results:
-        for result in results:
+    # Calculate RRF scores
+    for subquery_idx, results in enumerate(all_results):
+        for rank, result in enumerate(results, start=1):
             uuid = result['uuid']
-            score = result.get('score', 0.0)
             
-            if uuid not in score_map:
-                score_map[uuid] = []
+            # RRF contribution: 1 / (k + rank)
+            rrf_contribution = 1.0 / (k_constant + rank)
+            
+            if uuid not in rrf_scores:
+                rrf_scores[uuid] = 0.0
                 result_map[uuid] = result
+                subquery_attribution[uuid] = []
             
-            score_map[uuid].append(score)
+            rrf_scores[uuid] += rrf_contribution
+            subquery_attribution[uuid].append(subquery_idx)
     
-    # Fusion: average score across sub-queries, with bonus for appearing in multiple
-    fused_scores = []
-    for uuid, scores in score_map.items():
-        avg_score = sum(scores) / len(scores)
-        coverage_bonus = len(scores) / len(all_results) * 0.1  # Up to 0.1 bonus
-        fused_score = avg_score + coverage_bonus
-        fused_scores.append((uuid, fused_score))
+    # Sort by RRF score
+    sorted_items = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
     
-    # Sort by fused score
-    fused_scores.sort(key=lambda x: x[1], reverse=True)
-    
-    # Return top-k
+    # Build merged results
     merged = []
-    for uuid, fused_score in fused_scores[:top_k]:
+    for uuid, rrf_score in sorted_items[:top_k]:
         result = result_map[uuid].copy()
-        result['score'] = fused_score
+        result['score'] = rrf_score
+        result['rrf_score'] = rrf_score
         result['multi_query_fusion'] = True
+        result['subquery_hits'] = len(subquery_attribution[uuid])
+        result['appeared_in_subqueries'] = subquery_attribution[uuid]
         merged.append(result)
     
+    logger.info(f"RRF Fusion: {len(rrf_scores)} unique results from {len(all_results)} sub-queries -> top {len(merged)}")
     return merged
 
 
