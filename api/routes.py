@@ -105,8 +105,88 @@ def hybrid_search(query: SearchQuery):
         # 1. Encode query
         query_vector = embedding_service.encode(query.text)
         
+        # 2. FAISS Search (Initial Seeds)
+        # Get top-50 as seeds for graph expansion
+        initial_k = min(50, query.top_k * 5)
+        seed_uuids, seed_scores = vector_index.search(query_vector, k=initial_k)
+        
+        if not seed_uuids:
+            return SearchResponse(results=[], count=0)
+
+        # Build seed score map for weighted graph scoring
+        seed_score_map = {uuid: score for uuid, score in zip(seed_uuids, seed_scores)}
+        
+        # 3. Graph Expansion - Discover related nodes
+        # Expand to depth=2 to find nodes not in initial vector results
+        expansion_depth = 2
+        expanded_candidates = graph_manager.expand_from_seeds(seed_uuids[:20], depth=expansion_depth)
+        
+        logger.info(f"Expanded from {len(seed_uuids)} seeds to {len(expanded_candidates)} candidates")
+        
+        # 4. Compute vector scores for ALL expanded candidates
+        # For nodes already in seed results, use cached scores
+        # For discovered nodes, compute on-the-fly
+        new_nodes = [n for n in expanded_candidates if n not in seed_score_map]
+        if new_nodes:
+            new_scores = vector_index.batch_compute_similarity(query_vector, new_nodes)
+            seed_score_map.update(new_scores)
+        
+        # 5. Hydrate all candidates with metadata
+        all_candidates = []
+        for uuid_str in expanded_candidates:
+            node_data = sqlite_manager.get_node(uuid_str)
+            if node_data:
+                all_candidates.append({
+                    "id": uuid_str,
+                    "score": seed_score_map.get(uuid_str, 0.0),
+                    "text": node_data['text'],
+                    "metadata": node_data['metadata']
+                })
+        
+        # 6. Calculate Graph Scores (with relationship awareness)
+        # Use top-10 seeds for connectivity calculation
+        top_seeds = seed_uuids[:10]
+        graph_scores = {}
+        
+        for candidate in all_candidates:
+            uuid_str = candidate['id']
+            graph_breakdown = graph_manager.calculate_expanded_graph_score(
+                uuid_str, 
+                top_seeds,
+                seed_vector_scores=seed_score_map
+            )
+            graph_scores[uuid_str] = graph_breakdown['combined']
+            
+        # 7. Fusion
+        fused_results = hybrid_fusion(
+            all_candidates, 
+            graph_scores, 
+            alpha=query.alpha, 
+            beta=query.beta
+        )
+        
+        # 8. Top K
+        final_results = fused_results[:query.top_k]
+        
+        return SearchResponse(results=final_results, count=len(final_results))
+        
+    except Exception as e:
+        logger.error(f"Error in hybrid search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/v1/search/hybrid/legacy", response_model=SearchResponse)
+@read_locked
+def hybrid_search_legacy(query: SearchQuery):
+    """
+    Legacy hybrid search (re-ranking only, no graph expansion).
+    Kept for comparison purposes.
+    """
+    try:
+        # 1. Encode query
+        query_vector = embedding_service.encode(query.text)
+        
         # 2. FAISS Search (Over-fetch)
-        # Fetch 3x top_k to allow graph re-ranking to have effect
         candidates_k = query.top_k * 3
         candidate_uuids, candidate_scores = vector_index.search(query_vector, k=candidates_k)
         
@@ -149,7 +229,7 @@ def hybrid_search(query: SearchQuery):
         return SearchResponse(results=final_results, count=len(final_results))
         
     except Exception as e:
-        logger.error(f"Error in hybrid search: {e}")
+        logger.error(f"Error in legacy hybrid search: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/v1/search/graph")

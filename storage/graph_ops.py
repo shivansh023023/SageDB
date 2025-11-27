@@ -138,4 +138,148 @@ class GraphManager:
                     
         return {"nodes": nodes, "edges": edges}
 
+    def expand_from_seeds(self, seed_nodes: List[str], depth: int = 2) -> List[str]:
+        """
+        BFS expansion from seed nodes to discover related nodes.
+        Returns a list of all nodes reachable within 'depth' hops from any seed.
+        """
+        expanded = set(seed_nodes)
+        
+        for seed in seed_nodes:
+            if not self.graph.has_node(seed):
+                continue
+            try:
+                # Get all nodes within 'depth' hops from this seed
+                neighbors = nx.single_source_shortest_path_length(self.graph, seed, cutoff=depth)
+                expanded.update(neighbors.keys())
+                
+                # Also check reverse direction (incoming edges)
+                reverse_neighbors = nx.single_source_shortest_path_length(
+                    self.graph.reverse(), seed, cutoff=depth
+                )
+                expanded.update(reverse_neighbors.keys())
+            except Exception as e:
+                logger.warning(f"Error expanding from seed {seed}: {e}")
+                continue
+        
+        return list(expanded)
+
+    def get_relationship_score(self, candidate: str, seed_nodes: List[str]) -> float:
+        """
+        Calculate a relationship-aware score based on edge types.
+        Higher scores for semantically meaningful relationships.
+        """
+        # Edge type weights (more meaningful relationships get higher scores)
+        edge_weights = {
+            "is_a": 1.0,
+            "part_of": 0.95,
+            "specialization_of": 0.9,
+            "uses": 0.85,
+            "depends_on": 0.8,
+            "implements": 0.8,
+            "extends": 0.75,
+            "related_to": 0.5,
+            "mentioned_in": 0.3
+        }
+        
+        scores = []
+        
+        for seed in seed_nodes:
+            if seed == candidate:
+                continue
+                
+            # Check direct edge from seed to candidate
+            if self.graph.has_edge(seed, candidate):
+                edge_data = self.graph.get_edge_data(seed, candidate)
+                relation = edge_data.get('relation', 'related_to')
+                weight = edge_weights.get(relation, 0.4)
+                scores.append(weight)
+            
+            # Check direct edge from candidate to seed
+            if self.graph.has_edge(candidate, seed):
+                edge_data = self.graph.get_edge_data(candidate, seed)
+                relation = edge_data.get('relation', 'related_to')
+                weight = edge_weights.get(relation, 0.4)
+                scores.append(weight)
+        
+        return max(scores) if scores else 0.0
+
+    def calculate_expanded_graph_score(
+        self, 
+        candidate_node: str, 
+        seed_set: List[str],
+        seed_vector_scores: Dict[str, float] = None
+    ) -> Dict[str, float]:
+        """
+        Calculate comprehensive graph score for a candidate node.
+        Returns breakdown of connectivity, centrality, and relationship scores.
+        """
+        if not self.graph.has_node(candidate_node):
+            return {
+                "connectivity": 0.0,
+                "centrality": 0.0,
+                "relationship": 0.0,
+                "combined": 0.0
+            }
+
+        # 1. Connectivity Score (weighted by seed vector scores if available)
+        distances = []
+        weights = []
+        
+        for seed in seed_set:
+            if seed == candidate_node:
+                distances.append(0.0)
+                weights.append(seed_vector_scores.get(seed, 1.0) if seed_vector_scores else 1.0)
+                continue
+            if not self.graph.has_node(seed):
+                continue
+                
+            # Try both directions
+            dist = float('inf')
+            try:
+                if nx.has_path(self.graph, seed, candidate_node):
+                    dist = min(dist, nx.shortest_path_length(self.graph, seed, candidate_node))
+            except:
+                pass
+            try:
+                if nx.has_path(self.graph, candidate_node, seed):
+                    dist = min(dist, nx.shortest_path_length(self.graph, candidate_node, seed))
+            except:
+                pass
+                
+            if dist != float('inf'):
+                distances.append(dist)
+                weights.append(seed_vector_scores.get(seed, 1.0) if seed_vector_scores else 1.0)
+
+        if distances:
+            # Weighted average distance (weighted by vector scores of seeds)
+            if seed_vector_scores and sum(weights) > 0:
+                weighted_avg_dist = sum(d * w for d, w in zip(distances, weights)) / sum(weights)
+            else:
+                weighted_avg_dist = sum(distances) / len(distances)
+            connectivity_score = math.exp(-weighted_avg_dist)
+        else:
+            connectivity_score = 0.0
+
+        # 2. Centrality Score
+        degree = self.graph.in_degree(candidate_node) + self.graph.out_degree(candidate_node)
+        if len(self.graph) > 0:
+            max_degree = max(d for n, d in self.graph.degree())
+            centrality_score = degree / max_degree if max_degree > 0 else 0.0
+        else:
+            centrality_score = 0.0
+
+        # 3. Relationship Score
+        relationship_score = self.get_relationship_score(candidate_node, seed_set)
+
+        # Combined Score (weighted)
+        combined = (0.5 * connectivity_score) + (0.3 * centrality_score) + (0.2 * relationship_score)
+        
+        return {
+            "connectivity": connectivity_score,
+            "centrality": centrality_score,
+            "relationship": relationship_score,
+            "combined": combined
+        }
+
 graph_manager = GraphManager()

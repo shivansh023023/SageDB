@@ -57,10 +57,46 @@ async def startup_event():
     logger.info(f"Integrity Check - SQLite Nodes: {sqlite_count}, FAISS Vectors: {faiss_count}")
     
     if sqlite_count != faiss_count:
-        logger.warning("MISMATCH DETECTED: SQLite and FAISS counts do not match. Index might be out of sync.")
-        # In a real system, we might trigger a rebuild here
+        logger.warning("MISMATCH DETECTED: SQLite and FAISS counts do not match. Rebuilding FAISS index...")
+        # Rebuild FAISS index from SQLite
+        rebuild_faiss_from_sqlite()
     
     logger.info("System Ready.")
+
+
+def rebuild_faiss_from_sqlite():
+    """Rebuild FAISS index from SQLite data."""
+    logger.info("Starting FAISS index rebuild from SQLite...")
+    
+    # Get all nodes from SQLite
+    all_nodes = sqlite_manager.get_all_nodes(limit=10000, offset=0)
+    
+    for node in all_nodes:
+        uuid = node['uuid']
+        text = node['text']
+        faiss_id = node['faiss_id']
+        
+        # Generate embedding
+        vector = embedding_service.encode(text)
+        
+        # Add to FAISS
+        vector_index.add_vector(vector, faiss_id, uuid)
+        
+        # Also ensure node is in graph
+        graph_manager.add_node(uuid)
+    
+    # Rebuild edges in graph from SQLite
+    all_edges = sqlite_manager.get_all_edges(limit=10000, offset=0)
+    for edge in all_edges:
+        graph_manager.add_edge(
+            edge['source_id'], 
+            edge['target_id'], 
+            edge['relation'], 
+            edge['weight']
+        )
+    
+    logger.info(f"FAISS rebuild complete. Total vectors: {vector_index.ntotal}")
+
 
 app.include_router(router)
 

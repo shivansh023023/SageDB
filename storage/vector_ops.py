@@ -78,6 +78,75 @@ class VectorIndex:
         """Save index to disk."""
         faiss.write_index(self.index, self.index_path)
 
+    def get_vector_by_id(self, faiss_id: int) -> np.ndarray:
+        """
+        Retrieve vector by FAISS ID.
+        Note: This requires reconstructing from the index.
+        """
+        try:
+            # For IndexIDMap, we need to reconstruct the vector
+            vector = self.index.reconstruct(int(faiss_id))
+            return vector
+        except Exception as e:
+            logger.warning(f"Could not reconstruct vector for ID {faiss_id}: {e}")
+            return None
+
+    def compute_similarity(self, query_vector: np.ndarray, target_uuid: str) -> float:
+        """
+        Compute cosine similarity between query vector and a specific node's vector.
+        Returns similarity score (0-1 for normalized vectors).
+        """
+        # Find faiss_id from uuid
+        target_faiss_id = None
+        for fid, uuid in self.id_map.items():
+            if uuid == target_uuid:
+                target_faiss_id = fid
+                break
+        
+        if target_faiss_id is None:
+            return 0.0
+        
+        target_vector = self.get_vector_by_id(target_faiss_id)
+        if target_vector is None:
+            return 0.0
+        
+        # Compute inner product (cosine similarity for normalized vectors)
+        query_norm = query_vector.reshape(-1).astype('float32')
+        target_norm = target_vector.reshape(-1).astype('float32')
+        similarity = float(np.dot(query_norm, target_norm))
+        
+        return max(0.0, similarity)  # Clamp to non-negative
+
+    def batch_compute_similarity(self, query_vector: np.ndarray, target_uuids: List[str]) -> dict:
+        """
+        Compute similarity scores for multiple target nodes at once.
+        Returns: Dict[uuid, similarity_score]
+        """
+        results = {}
+        query_norm = query_vector.reshape(-1).astype('float32')
+        
+        for uuid in target_uuids:
+            # Find faiss_id
+            target_faiss_id = None
+            for fid, u in self.id_map.items():
+                if u == uuid:
+                    target_faiss_id = fid
+                    break
+            
+            if target_faiss_id is None:
+                results[uuid] = 0.0
+                continue
+            
+            target_vector = self.get_vector_by_id(target_faiss_id)
+            if target_vector is None:
+                results[uuid] = 0.0
+                continue
+            
+            similarity = float(np.dot(query_norm, target_vector.reshape(-1)))
+            results[uuid] = max(0.0, similarity)
+        
+        return results
+
     @property
     def ntotal(self):
         return self.index.ntotal

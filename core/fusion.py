@@ -34,9 +34,10 @@ def hybrid_fusion(
     
     for res in vector_results:
         uuid = res['id']
+        raw_score = res['score']
         
         # Normalize vector score to [0, 1]
-        v_score_norm = (res['score'] - min_v) / denom
+        v_score_norm = (raw_score - min_v) / denom
         
         # Get graph score (already in [0, 1] or similar scale based on formula)
         g_score = graph_scores.get(uuid, 0.0)
@@ -51,7 +52,7 @@ def hybrid_fusion(
             "score": final_score,
             "vector_score": v_score_norm,
             "graph_score": g_score,
-            "raw_vector_score": res['score']
+            "raw_vector_score": raw_score
         })
 
     # Sort by final score descending
