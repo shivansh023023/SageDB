@@ -32,9 +32,10 @@ def hybrid_fusion(
 
     fused_results = []
     
-    for res in vector_results:
+    for rank, res in enumerate(vector_results, 1):
         uuid = res['id']
         raw_score = res['score']
+        metadata = res.get("metadata", {})
         
         # Normalize vector score to [0, 1]
         v_score_norm = (raw_score - min_v) / denom
@@ -45,17 +46,35 @@ def hybrid_fusion(
         # Final Score Calculation
         final_score = (alpha * v_score_norm) + (beta * g_score)
         
+        # Extract chunking info from metadata
+        source_document = metadata.get("source")
+        chunk_index = metadata.get("chunk_index")
+        total_chunks = metadata.get("total_chunks")
+        char_offset = metadata.get("char_offset")
+        
         fused_results.append({
             "uuid": uuid,
             "text": res.get("text", ""),
-            "metadata": res.get("metadata", {}),
+            "metadata": metadata,
             "score": final_score,
             "vector_score": v_score_norm,
             "graph_score": g_score,
-            "raw_vector_score": raw_score
+            "raw_vector_score": raw_score,
+            # Chunking visibility fields
+            "source_document": source_document,
+            "chunk_index": chunk_index,
+            "total_chunks": total_chunks,
+            "section_path": metadata.get("hierarchy"),
+            "char_offset": char_offset,
+            # Retrieval metadata
+            "retrieval_rank": rank
         })
 
     # Sort by final score descending
     fused_results.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Update retrieval_rank after sorting
+    for rank, result in enumerate(fused_results, 1):
+        result['retrieval_rank'] = rank
     
     return fused_results

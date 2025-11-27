@@ -213,6 +213,145 @@ class SQLiteManager:
             }
         return results
 
+    def get_filtered_node_ids(
+        self, 
+        metadata_filter: Optional[Dict[str, str]] = None, 
+        node_type_filter: Optional[str] = None,
+        limit: int = 10000
+    ) -> List[int]:
+        """
+        Pre-filter nodes by metadata and/or type BEFORE vector search.
+        
+        This enables efficient filtered search by:
+        1. Filtering in SQLite (fast, indexed)
+        2. Returning only FAISS IDs that match
+        3. Vector search then only considers these IDs
+        
+        Args:
+            metadata_filter: Dict of key-value pairs to match in metadata JSON
+            node_type_filter: Filter by node type (document, entity, concept)
+            limit: Maximum number of IDs to return
+            
+        Returns:
+            List of FAISS IDs matching the filter criteria
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        
+        # Build dynamic WHERE clause
+        conditions = []
+        params = []
+        
+        if node_type_filter:
+            conditions.append("type = ?")
+            params.append(node_type_filter)
+        
+        if metadata_filter:
+            for key, value in metadata_filter.items():
+                # Use JSON extraction for metadata filtering
+                conditions.append(f"json_extract(metadata, '$.{key}') = ?")
+                params.append(value)
+        
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+        query = f"SELECT faiss_id FROM nodes WHERE {where_clause} LIMIT ?"
+        params.append(limit)
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [row[0] for row in rows]
+
+    def get_chunk_provenance(self, node_uuid: str) -> Optional[Dict]:
+        """
+        Get chunking provenance information for a node.
+        
+        Returns source document info, chunk index, and section hierarchy
+        for enhanced visibility into where content came from.
+        
+        Args:
+            node_uuid: UUID of the node to get provenance for
+            
+        Returns:
+            Dict with source_document, chunk_index, total_chunks, section_path, etc.
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        
+        # Join chunks with documents to get full provenance
+        cursor.execute("""
+            SELECT 
+                d.filename as source_document,
+                c.chunk_index,
+                (SELECT COUNT(*) FROM chunks WHERE document_id = c.document_id) as total_chunks,
+                c.section_hierarchy,
+                d.file_type,
+                d.ingested_at
+            FROM chunks c
+            JOIN documents d ON c.document_id = d.id
+            WHERE c.node_uuid = ?
+        """, (node_uuid,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            section_path = json.loads(row[3]) if row[3] else None
+            return {
+                "source_document": row[0],
+                "chunk_index": row[1],
+                "total_chunks": row[2],
+                "section_path": section_path,
+                "file_type": row[4],
+                "ingested_at": row[5]
+            }
+        return None
+
+    def get_chunks_provenance_batch(self, node_uuids: List[str]) -> Dict[str, Dict]:
+        """
+        Batch fetch provenance for multiple nodes.
+        
+        Args:
+            node_uuids: List of node UUIDs
+            
+        Returns:
+            Dict mapping UUID -> provenance data
+        """
+        if not node_uuids:
+            return {}
+        
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        
+        placeholders = ','.join(['?'] * len(node_uuids))
+        cursor.execute(f"""
+            SELECT 
+                c.node_uuid,
+                d.filename as source_document,
+                c.chunk_index,
+                (SELECT COUNT(*) FROM chunks c2 WHERE c2.document_id = c.document_id) as total_chunks,
+                c.section_hierarchy,
+                d.file_type
+            FROM chunks c
+            JOIN documents d ON c.document_id = d.id
+            WHERE c.node_uuid IN ({placeholders})
+        """, node_uuids)
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        results = {}
+        for row in rows:
+            section_path = json.loads(row[4]) if row[4] else None
+            results[row[0]] = {
+                "source_document": row[1],
+                "chunk_index": row[2],
+                "total_chunks": row[3],
+                "section_path": section_path,
+                "file_type": row[5]
+            }
+        return results
+
     def delete_node(self, uuid: str) -> Optional[int]:
         """Deletes node and returns its faiss_id if it existed."""
         conn = self._get_conn()

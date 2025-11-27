@@ -1,8 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends
-from typing import List, Dict
+from fastapi.responses import StreamingResponse
+from typing import List, Dict, Optional
 import uuid
 import logging
 import os
+import json
 
 from models.api_schemas import (
     NodeCreate, NodeResponse, NodeUpdate, EdgeCreate, EdgeUpdate, EdgeResponse,
@@ -12,6 +14,11 @@ from models.api_schemas import (
 from core.lock import read_locked, write_locked
 from core.embedding import embedding_service
 from core.fusion import hybrid_fusion
+from core.search_utils import (
+    search_cache, provenance_tracker,
+    deduplicate_by_text_hash, deduplicate_results,
+    decompose_query, merge_sub_query_results
+)
 from storage.sqlite_ops import sqlite_manager
 from storage.vector_ops import vector_index
 from storage.graph_ops import graph_manager
@@ -273,11 +280,38 @@ def vector_search(query: VectorSearchQuery):
 @router.post("/v1/search/hybrid", response_model=SearchResponse)
 @read_locked
 def hybrid_search(query: SearchQuery):
+    """
+    Enhanced hybrid search with:
+    - Metadata pre-filtering
+    - Personalized PageRank (query-aware graph scoring)
+    - Query decomposition for complex queries
+    - Result caching
+    - Semantic deduplication
+    - Provenance tracking
+    """
     import time as _time
     timings = {}
     _t0 = _time.time()
     
     try:
+        # Build cache params (excludes fields that shouldn't affect cache key)
+        cache_params = {
+            'top_k': query.top_k,
+            'alpha': query.alpha,
+            'beta': query.beta,
+            'offset': query.offset,
+            'metadata_filter': query.metadata_filter,
+            'use_ppr': query.use_ppr,
+            'deduplicate': query.deduplicate
+        }
+        
+        # Check cache first (if not bypassed)
+        if not query.bypass_cache:
+            cached = search_cache.get(query.text, cache_params)
+            if cached:
+                logger.info(f"Cache HIT for query: {query.text[:50]}...")
+                return SearchResponse(results=cached, count=len(cached))
+        
         # Normalize alpha/beta if they don't sum to 1.0
         total = query.alpha + query.beta
         if total > 0:
@@ -286,88 +320,70 @@ def hybrid_search(query: SearchQuery):
         else:
             alpha, beta = 0.5, 0.5
         
-        # 1. Encode query
+        # 1. Query Decomposition
         _t1 = _time.time()
-        query_vector = embedding_service.encode(query.text)
-        timings['1_encode'] = (_time.time() - _t1) * 1000
+        sub_queries = decompose_query(query.text) if query.decompose_query else [query.text]
+        timings['1_decompose'] = (_time.time() - _t1) * 1000
         
-        # 2. FAISS Search (Initial Seeds)
-        _t2 = _time.time()
-        initial_k = min(50, query.top_k * 5)
-        seed_uuids, seed_scores = vector_index.search(query_vector, k=initial_k)
-        timings['2_faiss'] = (_time.time() - _t2) * 1000
+        all_sub_results = []
         
-        if not seed_uuids:
-            return SearchResponse(results=[], count=0)
-
-        # Build seed score map for weighted graph scoring
-        seed_score_map = {uuid: score for uuid, score in zip(seed_uuids, seed_scores)}
-        
-        # 3. Graph Expansion
-        _t3 = _time.time()
-        expansion_depth = 2
-        expanded_candidates = graph_manager.expand_from_seeds(seed_uuids[:20], depth=expansion_depth)
-        timings['3_expand'] = (_time.time() - _t3) * 1000
-        
-        logger.info(f"Expanded from {len(seed_uuids)} seeds to {len(expanded_candidates)} candidates")
-        
-        # 4. Compute vector scores for expanded candidates
-        _t4 = _time.time()
-        new_nodes = [n for n in expanded_candidates if n not in seed_score_map]
-        if new_nodes:
-            new_scores = vector_index.batch_compute_similarity(query_vector, new_nodes)
-            seed_score_map.update(new_scores)
-        timings['4_batch_vec'] = (_time.time() - _t4) * 1000
-        
-        # 5. Batch Hydrate all candidates with metadata
-        _t5 = _time.time()
-        node_data_map = sqlite_manager.get_nodes_batch(list(expanded_candidates))
-        timings['5_hydrate'] = (_time.time() - _t5) * 1000
-        
-        all_candidates = []
-        for uuid_str in expanded_candidates:
-            node_data = node_data_map.get(uuid_str)
-            if node_data:
-                all_candidates.append({
-                    "id": uuid_str,
-                    "score": seed_score_map.get(uuid_str, 0.0),
-                    "text": node_data['text'],
-                    "metadata": node_data['metadata']
-                })
-        
-        # 6. Calculate Graph Scores (with relationship awareness)
-        _t6 = _time.time()
-        top_seeds = seed_uuids[:10]
-        graph_scores = {}
-        
-        for candidate in all_candidates:
-            uuid_str = candidate['id']
-            graph_breakdown = graph_manager.calculate_expanded_graph_score(
-                uuid_str, 
-                top_seeds,
-                seed_vector_scores=seed_score_map
+        for sub_query in sub_queries:
+            sub_results = _execute_single_search(
+                query_text=sub_query,
+                top_k=query.top_k,
+                alpha=alpha,
+                beta=beta,
+                metadata_filter=query.metadata_filter,
+                use_ppr=query.use_ppr,
+                timings=timings
             )
-            graph_scores[uuid_str] = graph_breakdown['combined']
-        timings['6_graph_score'] = (_time.time() - _t6) * 1000
-            
-        # 7. Fusion (using normalized alpha/beta)
-        _t7 = _time.time()
-        fused_results = hybrid_fusion(
-            all_candidates, 
-            graph_scores, 
-            alpha=alpha, 
-            beta=beta
-        )
-        timings['7_fusion'] = (_time.time() - _t7) * 1000
+            all_sub_results.append(sub_results)
         
-        # 8. Filter out low relevance results
+        # Merge sub-query results if decomposed
+        if len(sub_queries) > 1:
+            _tm = _time.time()
+            merged_results = merge_sub_query_results(all_sub_results, top_k=query.top_k * 2)
+            timings['merge_subqueries'] = (_time.time() - _tm) * 1000
+        else:
+            merged_results = all_sub_results[0] if all_sub_results else []
+        
+        # 2. Deduplication
+        _td = _time.time()
+        if query.deduplicate:
+            # First pass: exact text hash
+            merged_results = deduplicate_by_text_hash(merged_results)
+            # Second pass: semantic dedup (only if more than 10 results to avoid extra compute)
+            if len(merged_results) > 10:
+                merged_results = deduplicate_results(
+                    merged_results, 
+                    threshold=query.dedup_threshold,
+                    embedding_service=embedding_service
+                )
+        timings['dedup'] = (_time.time() - _td) * 1000
+        
+        # 3. Filter by relevance threshold
         filtered_results = [
-            r for r in fused_results 
+            r for r in merged_results 
             if r.get('score', 0) >= MINIMUM_RELEVANCE_THRESHOLD
         ]
         
-        # 9. Apply offset pagination and Top K
+        # 4. Apply offset pagination and Top K
         final_results = filtered_results[query.offset:query.offset + query.top_k]
+        
+        # 5. Provenance Tracking
+        if final_results:
+            retrieval_id = provenance_tracker.record_retrieval(
+                query=query.text,
+                results=final_results,
+                search_type="hybrid"
+            )
+            # Add retrieval_id to each result for citation
+            for result in final_results:
+                result['retrieval_id'] = retrieval_id
+        
+        # 6. Cache results
+        if not query.bypass_cache:
+            search_cache.set(query.text, cache_params, final_results)
         
         timings['total'] = (_time.time() - _t0) * 1000
         logger.info(f"SEARCH TIMINGS: {timings}")
@@ -377,6 +393,150 @@ def hybrid_search(query: SearchQuery):
     except Exception as e:
         logger.error(f"Error in hybrid search: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _execute_single_search(
+    query_text: str,
+    top_k: int,
+    alpha: float,
+    beta: float,
+    metadata_filter: Optional[Dict[str, str]] = None,
+    use_ppr: bool = True,
+    timings: Optional[Dict] = None
+) -> List[Dict]:
+    """
+    Execute a single search query (used for query decomposition).
+    
+    Returns list of result dicts.
+    """
+    import time as _time
+    if timings is None:
+        timings = {}
+    
+    # 1. Encode query
+    _t1 = _time.time()
+    query_vector = embedding_service.encode(query_text)
+    timings['encode'] = (_time.time() - _t1) * 1000
+    
+    # 2. Optional metadata pre-filtering
+    _t2 = _time.time()
+    allowed_uuids = None
+    if metadata_filter:
+        # Extract node_type filter if present
+        node_type = metadata_filter.pop('type', None)
+        allowed_uuids = sqlite_manager.filter_nodes_by_metadata(
+            node_type=node_type,
+            metadata_filter=metadata_filter if metadata_filter else None,
+            limit=1000  # Cap to prevent huge result sets
+        )
+        if node_type:
+            metadata_filter['type'] = node_type  # Restore for logging
+        if not allowed_uuids:
+            return []
+        logger.info(f"Pre-filter matched {len(allowed_uuids)} nodes")
+    timings['prefilter'] = (_time.time() - _t2) * 1000
+    
+    # 3. FAISS Search (with optional pre-filter)
+    _t3 = _time.time()
+    initial_k = min(50, top_k * 5)
+    
+    if allowed_uuids:
+        seed_uuids, seed_scores = vector_index.search_filtered(
+            query_vector, k=initial_k, allowed_uuids=allowed_uuids
+        )
+    else:
+        seed_uuids, seed_scores = vector_index.search(query_vector, k=initial_k)
+    timings['faiss'] = (_time.time() - _t3) * 1000
+    
+    if not seed_uuids:
+        return []
+
+    seed_score_map = {uuid: score for uuid, score in zip(seed_uuids, seed_scores)}
+    
+    # 4. Graph Expansion
+    _t4 = _time.time()
+    expansion_depth = 2
+    expanded_candidates = graph_manager.expand_from_seeds(seed_uuids[:20], depth=expansion_depth)
+    timings['expand'] = (_time.time() - _t4) * 1000
+    
+    logger.info(f"Expanded from {len(seed_uuids)} seeds to {len(expanded_candidates)} candidates")
+    
+    # 5. Compute vector scores for expanded candidates
+    _t5 = _time.time()
+    new_nodes = [n for n in expanded_candidates if n not in seed_score_map]
+    if new_nodes:
+        new_scores = vector_index.batch_compute_similarity(query_vector, new_nodes)
+        seed_score_map.update(new_scores)
+    timings['batch_vec'] = (_time.time() - _t5) * 1000
+    
+    # 6. Batch Hydrate all candidates with metadata
+    _t6 = _time.time()
+    node_data_map = sqlite_manager.get_nodes_batch(list(expanded_candidates))
+    timings['hydrate'] = (_time.time() - _t6) * 1000
+    
+    all_candidates = []
+    for uuid_str in expanded_candidates:
+        node_data = node_data_map.get(uuid_str)
+        if node_data:
+            all_candidates.append({
+                "id": uuid_str,
+                "score": seed_score_map.get(uuid_str, 0.0),
+                "text": node_data['text'],
+                "metadata": node_data['metadata']
+            })
+    
+    # 7. Calculate Graph Scores
+    _t7 = _time.time()
+    top_seeds = seed_uuids[:10]
+    graph_scores = {}
+    
+    if use_ppr and len(top_seeds) > 0:
+        # Use Personalized PageRank with top seeds as personalization
+        # Weight seeds by their vector scores
+        ppr_scores = graph_manager.compute_personalized_pagerank(
+            seed_nodes=top_seeds,
+            alpha=0.85,
+            weight_by_score=seed_score_map
+        )
+        
+        # Combine PPR with expanded graph score
+        for candidate in all_candidates:
+            uuid_str = candidate['id']
+            ppr_score = ppr_scores.get(uuid_str, 0.0)
+            
+            # Also get traditional graph score for comparison
+            graph_breakdown = graph_manager.calculate_expanded_graph_score(
+                uuid_str, 
+                top_seeds,
+                seed_vector_scores=seed_score_map
+            )
+            
+            # Blend PPR and traditional (60% PPR, 40% traditional)
+            combined = 0.6 * ppr_score + 0.4 * graph_breakdown['combined']
+            graph_scores[uuid_str] = combined
+    else:
+        # Fall back to traditional graph scoring
+        for candidate in all_candidates:
+            uuid_str = candidate['id']
+            graph_breakdown = graph_manager.calculate_expanded_graph_score(
+                uuid_str, 
+                top_seeds,
+                seed_vector_scores=seed_score_map
+            )
+            graph_scores[uuid_str] = graph_breakdown['combined']
+    timings['graph_score'] = (_time.time() - _t7) * 1000
+        
+    # 8. Fusion
+    _t8 = _time.time()
+    fused_results = hybrid_fusion(
+        all_candidates, 
+        graph_scores, 
+        alpha=alpha, 
+        beta=beta
+    )
+    timings['fusion'] = (_time.time() - _t8) * 1000
+    
+    return fused_results
 
 
 @router.post("/v1/search/context", response_model=ContextSearchResponse)
@@ -655,3 +815,116 @@ def list_edges(limit: int = 100, offset: int = 0):
         return sqlite_manager.get_all_edges(limit, offset)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# CACHE & ANALYTICS ENDPOINTS
+# ============================================
+
+@router.get("/v1/cache/stats")
+def get_cache_stats():
+    """Get search cache statistics."""
+    return search_cache.stats()
+
+
+@router.post("/v1/cache/clear")
+@write_locked
+def clear_cache():
+    """Clear the search cache."""
+    search_cache.clear()
+    return {"status": "cache_cleared"}
+
+
+@router.get("/v1/analytics/popular-chunks")
+def get_popular_chunks(top_k: int = 10):
+    """Get most frequently retrieved chunks."""
+    return provenance_tracker.get_popular_chunks(top_k)
+
+
+@router.get("/v1/analytics/chunk/{uuid}")
+def get_chunk_usage(uuid: str):
+    """Get usage statistics for a specific chunk."""
+    return provenance_tracker.get_chunk_usage(uuid)
+
+
+@router.get("/v1/analytics/retrieval/{retrieval_id}")
+def get_retrieval(retrieval_id: str):
+    """Get details of a specific retrieval event."""
+    record = provenance_tracker.get_retrieval(retrieval_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Retrieval not found")
+    return record
+
+
+# ============================================
+# STREAMING SEARCH ENDPOINT
+# ============================================
+
+@router.post("/v1/search/hybrid/stream")
+async def hybrid_search_stream(query: SearchQuery):
+    """
+    Streaming hybrid search using Server-Sent Events.
+    
+    Streams results as they are found, useful for:
+    - Large result sets
+    - Progressive UI updates
+    - Reducing time-to-first-result
+    
+    Returns SSE format:
+    data: {"event": "result", "data": {...}}
+    data: {"event": "done", "count": N}
+    """
+    import time as _time
+    
+    async def generate_results():
+        try:
+            # Normalize alpha/beta
+            total = query.alpha + query.beta
+            if total > 0:
+                alpha = query.alpha / total
+                beta = query.beta / total
+            else:
+                alpha, beta = 0.5, 0.5
+            
+            # Execute search (reuse internal function)
+            results = _execute_single_search(
+                query_text=query.text,
+                top_k=query.top_k * 2,  # Get extra for dedup
+                alpha=alpha,
+                beta=beta,
+                metadata_filter=query.metadata_filter,
+                use_ppr=query.use_ppr
+            )
+            
+            # Filter by relevance
+            results = [r for r in results if r.get('score', 0) >= MINIMUM_RELEVANCE_THRESHOLD]
+            
+            # Dedup if requested
+            if query.deduplicate:
+                results = deduplicate_by_text_hash(results)
+            
+            # Apply pagination
+            results = results[query.offset:query.offset + query.top_k]
+            
+            # Stream each result
+            for i, result in enumerate(results):
+                yield f"data: {json.dumps({'event': 'result', 'index': i, 'data': result})}\n\n"
+                # Small delay to simulate streaming (remove in production)
+                # await asyncio.sleep(0.01)
+            
+            # Send done event
+            yield f"data: {json.dumps({'event': 'done', 'count': len(results)})}\n\n"
+            
+        except Exception as e:
+            logger.error(f"Error in streaming search: {e}")
+            yield f"data: {json.dumps({'event': 'error', 'message': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate_results(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
+        }
+    )
+

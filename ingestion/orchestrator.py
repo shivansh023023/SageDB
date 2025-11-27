@@ -204,17 +204,23 @@ class IngestionOrchestrator:
         # 7. Store chunks as nodes
         chunk_uuids = []
         nodes_created = 0
+        total_chunks = len(all_chunks)
         
         for i, (chunk, embedding) in enumerate(zip(all_chunks, embeddings)):
             chunk_uuid = str(uuid.uuid4())
             
             try:
-                # Prepare metadata
+                # Prepare metadata with full chunking visibility
                 chunk_metadata = {
                     "document_id": document_id,
                     "chunk_index": i,
+                    "total_chunks": total_chunks,
+                    "char_offset": chunk.start_char,
+                    "char_end": chunk.end_char,
                     "title": chunk.title,
                     "hierarchy": chunk.hierarchy,
+                    "source": filename,
+                    "format": format_hint or "text",
                     **(chunk.metadata or {})
                 }
                 

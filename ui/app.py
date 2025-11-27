@@ -503,6 +503,49 @@ if page == "💚 System Health":
         
         st.divider()
         
+        # Cache & Analytics
+        st.markdown("#### 🔄 Cache & Analytics")
+        
+        cache_col1, cache_col2 = st.columns(2)
+        
+        with cache_col1:
+            try:
+                cache_res = session.get(f"{API_URL}/v1/cache/stats", timeout=5)
+                if cache_res.status_code == 200:
+                    cache_stats = cache_res.json()
+                    st.markdown("##### Search Cache")
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        st.metric("Cached Queries", cache_stats.get('size', 0))
+                    with c2:
+                        st.metric("Hit Rate", f"{cache_stats.get('hit_rate', 0)*100:.1f}%")
+                    with c3:
+                        st.metric("TTL", f"{cache_stats.get('ttl_seconds', 300)}s")
+                    
+                    if st.button("🗑️ Clear Cache", key="clear_cache"):
+                        clear_res = session.post(f"{API_URL}/v1/cache/clear", timeout=5)
+                        if clear_res.status_code == 200:
+                            st.success("Cache cleared!")
+                            st.rerun()
+            except:
+                st.warning("Cache stats unavailable")
+        
+        with cache_col2:
+            try:
+                popular_res = session.get(f"{API_URL}/v1/analytics/popular-chunks?top_k=5", timeout=5)
+                if popular_res.status_code == 200:
+                    popular = popular_res.json()
+                    st.markdown("##### Popular Chunks")
+                    if popular:
+                        for i, chunk in enumerate(popular[:3], 1):
+                            st.markdown(f"{i}. `{chunk['uuid'][:8]}...` - {chunk['retrieval_count']} retrievals")
+                    else:
+                        st.caption("No retrievals recorded yet")
+            except:
+                st.caption("Analytics unavailable")
+        
+        st.divider()
+        
         # Server info
         col_info, col_raw = st.columns([1, 1])
         
@@ -1032,9 +1075,21 @@ elif page == "🔍 Search":
                     top_k = st.number_input("Results", min_value=1, max_value=50, value=5)
                 with col4:
                     offset = st.number_input("Offset", min_value=0, max_value=100, value=0, help="Skip this many results (pagination)")
+                
+                # New advanced options
+                st.markdown("**Advanced Options**")
+                adv_col1, adv_col2, adv_col3 = st.columns(3)
+                with adv_col1:
+                    use_ppr = st.checkbox("Personalized PageRank", value=True, help="Use query-aware graph scoring")
+                with adv_col2:
+                    deduplicate = st.checkbox("Deduplicate", value=True, help="Remove semantically similar results")
+                with adv_col3:
+                    decompose_query = st.checkbox("Query Decomposition", value=False, help="Split complex queries (e.g., 'Compare X and Y')")
+                
             elif search_type == "Vector Only":
                 st.caption("Pure semantic similarity using embeddings")
                 alpha, beta = 1.0, 0.0
+                use_ppr, deduplicate, decompose_query = False, True, False
                 col1, col2 = st.columns(2)
                 with col1:
                     top_k = st.number_input("Results", min_value=1, max_value=50, value=5)
@@ -1043,6 +1098,7 @@ elif page == "🔍 Search":
             else:  # Graph Only
                 st.caption("Graph-based search using connectivity")
                 alpha, beta = 0.0, 1.0
+                use_ppr, deduplicate, decompose_query = True, True, False
                 col1, col2 = st.columns(2)
                 with col1:
                     top_k = st.number_input("Results", min_value=1, max_value=50, value=5)
@@ -1058,7 +1114,16 @@ elif page == "🔍 Search":
                     payload = {"text": query, "top_k": int(top_k), "offset": int(offset)}
                     res = session.post(f"{API_URL}/v1/search/vector", json=payload, timeout=30)
                 else:
-                    payload = {"text": query, "alpha": float(alpha), "beta": float(beta), "top_k": int(top_k), "offset": int(offset)}
+                    payload = {
+                        "text": query, 
+                        "alpha": float(alpha), 
+                        "beta": float(beta), 
+                        "top_k": int(top_k), 
+                        "offset": int(offset),
+                        "use_ppr": use_ppr,
+                        "deduplicate": deduplicate,
+                        "decompose_query": decompose_query
+                    }
                     res = session.post(f"{API_URL}/v1/search/hybrid", json=payload, timeout=30)
             
             if res.status_code == 200:

@@ -338,30 +338,36 @@ We have successfully built a working prototype that meets the core requirements 
 
 #### Backend API (FastAPI)
 
-| Endpoint                     | Method | Description                                                                | Status |
-| ---------------------------- | ------ | -------------------------------------------------------------------------- | ------ |
-| `/v1/nodes`                  | POST   | Create nodes with automatic embedding generation                           | ✅     |
-| `/v1/nodes`                  | GET    | List all nodes with pagination                                             | ✅     |
-| `/v1/nodes/{uuid}`           | GET    | Retrieve single node                                                       | ✅     |
-| `/v1/nodes/{uuid}`           | PUT    | Update node text/metadata, regenerate embedding                            | ✅     |
-| `/v1/nodes/{uuid}`           | DELETE | Delete node from all storage layers                                        | ✅     |
-| `/v1/edges`                  | POST   | Create typed relationships between nodes                                   | ✅     |
-| `/v1/edges`                  | GET    | List all edges with pagination                                             | ✅     |
-| `/v1/edges/{edge_id}`        | GET    | Retrieve single edge by ID                                                 | ✅     |
-| `/v1/edges/{edge_id}`        | PUT    | Update edge relation and/or weight                                         | ✅     |
-| `/v1/edges/{edge_id}`        | DELETE | Delete edge from all storage layers                                        | ✅     |
-| `/v1/search/hybrid`          | POST   | **Graph-Augmented Hybrid Search** with expansion + offset pagination       | ✅     |
-| `/v1/search/vector`          | POST   | **Pure Vector Search** (semantic similarity) + offset pagination           | ✅     |
-| `/v1/search/context`         | POST   | **Context-Aware Search** with sliding window expansion + offset pagination | ✅     |
-| `/v1/search/hybrid/legacy`   | POST   | Legacy re-ranking algorithm for comparison                                 | ✅     |
-| `/v1/search/graph`           | GET    | Subgraph visualization endpoint                                            | ✅     |
-| `/v1/benchmark`              | POST   | Calculate Precision/Recall/NDCG metrics                                    | ✅     |
-| `/v1/admin/snapshot`         | POST   | Persist FAISS and Graph to disk                                            | ✅     |
-| `/health`                    | GET    | System health check                                                        | ✅     |
-| `/v1/ingest/file`            | POST   | **Ingest single file** (md, txt, html, json, xml)                          | ✅     |
-| `/v1/ingest/batch`           | POST   | **Batch ingest multiple files**                                            | ✅     |
-| `/v1/ingest/text`            | POST   | **Ingest raw text** directly                                               | ✅     |
-| `/v1/ingest/supported-types` | GET    | Get supported file types and limits                                        | ✅     |
+| Endpoint                       | Method | Description                                                                | Status |
+| ------------------------------ | ------ | -------------------------------------------------------------------------- | ------ |
+| `/v1/nodes`                    | POST   | Create nodes with automatic embedding generation                           | ✅     |
+| `/v1/nodes`                    | GET    | List all nodes with pagination                                             | ✅     |
+| `/v1/nodes/{uuid}`             | GET    | Retrieve single node                                                       | ✅     |
+| `/v1/nodes/{uuid}`             | PUT    | Update node text/metadata, regenerate embedding                            | ✅     |
+| `/v1/nodes/{uuid}`             | DELETE | Delete node from all storage layers                                        | ✅     |
+| `/v1/edges`                    | POST   | Create typed relationships between nodes                                   | ✅     |
+| `/v1/edges`                    | GET    | List all edges with pagination                                             | ✅     |
+| `/v1/edges/{edge_id}`          | GET    | Retrieve single edge by ID                                                 | ✅     |
+| `/v1/edges/{edge_id}`          | PUT    | Update edge relation and/or weight                                         | ✅     |
+| `/v1/edges/{edge_id}`          | DELETE | Delete edge from all storage layers                                        | ✅     |
+| `/v1/search/hybrid`            | POST   | **Graph-Augmented Hybrid Search** with PPR, dedup, caching                 | ✅     |
+| `/v1/search/hybrid/stream`     | POST   | **Streaming Hybrid Search** via Server-Sent Events                         | ✅     |
+| `/v1/search/vector`            | POST   | **Pure Vector Search** (semantic similarity) + offset pagination           | ✅     |
+| `/v1/search/context`           | POST   | **Context-Aware Search** with sliding window expansion + offset pagination | ✅     |
+| `/v1/search/hybrid/legacy`     | POST   | Legacy re-ranking algorithm for comparison                                 | ✅     |
+| `/v1/search/graph`             | GET    | Subgraph visualization endpoint                                            | ✅     |
+| `/v1/cache/stats`              | GET    | **Search cache statistics** (size, hit rate, TTL)                          | ✅     |
+| `/v1/cache/clear`              | POST   | **Clear search cache**                                                     | ✅     |
+| `/v1/analytics/popular-chunks` | GET    | **Top retrieved chunks** with retrieval counts                             | ✅     |
+| `/v1/analytics/chunk/{uuid}`   | GET    | **Chunk usage statistics** (retrieval count, avg rank, etc.)               | ✅     |
+| `/v1/analytics/retrieval/{id}` | GET    | **Retrieval event details** for citation/provenance                        | ✅     |
+| `/v1/benchmark`                | POST   | Calculate Precision/Recall/NDCG metrics                                    | ✅     |
+| `/v1/admin/snapshot`           | POST   | Persist FAISS and Graph to disk                                            | ✅     |
+| `/health`                      | GET    | System health check                                                        | ✅     |
+| `/v1/ingest/file`              | POST   | **Ingest single file** (md, txt, html, json, xml)                          | ✅     |
+| `/v1/ingest/batch`             | POST   | **Batch ingest multiple files**                                            | ✅     |
+| `/v1/ingest/text`              | POST   | **Ingest raw text** directly                                               | ✅     |
+| `/v1/ingest/supported-types`   | GET    | Get supported file types and limits                                        | ✅     |
 
 #### Ingestion Pipeline (NEW)
 
@@ -491,6 +497,64 @@ The following scalability features have been implemented:
 - ✅ **GraphML Persistence**: Graph is now persisted as GraphML format instead of pickle for better interoperability
 - ✅ **Batch Hydration**: Eliminated N+1 query problem with `get_nodes_batch()` for efficient metadata retrieval
 - ✅ **Offset Pagination**: All search endpoints now support `offset` parameter for paginated results
+
+### ✅ Completed Production RAG Features
+
+The following production-grade RAG features have been implemented:
+
+- ✅ **Personalized PageRank (PPR)**: Query-aware graph importance scoring. Unlike global PageRank, PPR biases node importance toward the seed nodes from vector search, enabling "what's important relative to my query" scoring. Supports optional score-weighted personalization.
+
+- ✅ **Metadata Pre-Filtering**: Filter nodes by type and metadata conditions BEFORE vector search. Uses SQLite for efficient filtering, then performs FAISS search only on matching node IDs using `IDSelectorBatch`. Reduces search space for domain-specific queries.
+
+- ✅ **Query Decomposition**: Automatically splits complex queries into sub-queries:
+
+  - "Compare X and Y" → ["X", "Y"]
+  - "X vs Y" → ["X", "Y"]
+  - Multiple sentences → separate queries
+  - Results merged using round-robin fusion with coverage bonus
+
+- ✅ **Semantic Deduplication**: Two-pass deduplication:
+
+  1. Fast exact-match using MD5 text hash
+  2. Semantic dedup using cosine similarity threshold (default 0.95)
+
+  - Prevents redundant results in RAG context windows
+
+- ✅ **LRU Search Cache**: In-memory cache for repeated queries:
+
+  - Default: 100 entries, 5-minute TTL
+  - Cache key includes query text + all search parameters
+  - API endpoints: `/v1/cache/stats`, `/v1/cache/clear`
+  - ~100x speedup for cached queries
+
+- ✅ **Provenance Tracking**: Complete retrieval audit trail:
+
+  - Records every search with timestamp, query, results, and scores
+  - `retrieval_id` returned with each search for citation
+  - Analytics: `/v1/analytics/popular-chunks`, `/v1/analytics/chunk/{uuid}`
+  - Enables feedback loops and relevance tuning
+
+- ✅ **Streaming Search**: Server-Sent Events endpoint for progressive results:
+  - Endpoint: `/v1/search/hybrid/stream`
+  - Streams results as `{"event": "result", "data": {...}}`
+  - Reduces time-to-first-result for large result sets
+  - Ideal for real-time UI updates
+
+**New Search Parameters:**
+
+```python
+SearchQuery(
+    text="query",
+    top_k=10,
+    alpha=0.7, beta=0.3,          # Fusion weights
+    metadata_filter={"source": "wiki"},  # Pre-filter by metadata
+    use_ppr=True,                  # Use Personalized PageRank
+    deduplicate=True,              # Remove similar results
+    dedup_threshold=0.95,          # Similarity threshold
+    decompose_query=False,         # Split complex queries
+    bypass_cache=False             # Skip cache for fresh results
+)
+```
 
 ---
 

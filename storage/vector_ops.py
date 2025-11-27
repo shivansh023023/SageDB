@@ -195,6 +195,114 @@ class VectorIndex:
                 result_scores.append(float(score))
                 
         return result_uuids, result_scores
+
+    def search_with_filter(
+        self, 
+        query_vector: np.ndarray, 
+        k: int, 
+        allowed_faiss_ids: List[int],
+        ef_search: int = None
+    ) -> Tuple[List[str], List[float]]:
+        """
+        Search for nearest neighbors, but only among allowed FAISS IDs.
+        
+        This enables pre-filtered search where SQLite filters by metadata
+        first, then we only search among the allowed vectors.
+        
+        Args:
+            query_vector: Query embedding
+            k: Number of results to return
+            allowed_faiss_ids: List of FAISS IDs to consider (from SQLite pre-filter)
+            ef_search: (HNSW only) Override efSearch for this query
+            
+        Returns: (List[UUID], List[Scores])
+        """
+        if not allowed_faiss_ids:
+            return [], []
+        
+        # For small filter sets, compute scores directly
+        if len(allowed_faiss_ids) <= 1000:
+            return self._search_filtered_direct(query_vector, k, allowed_faiss_ids)
+        
+        # For larger sets, use IDSelectorBatch if available
+        return self._search_filtered_batch(query_vector, k, allowed_faiss_ids, ef_search)
+    
+    def _search_filtered_direct(
+        self, 
+        query_vector: np.ndarray, 
+        k: int, 
+        allowed_faiss_ids: List[int]
+    ) -> Tuple[List[str], List[float]]:
+        """
+        Direct filtered search for small filter sets.
+        Computes similarity to each allowed vector and returns top-k.
+        """
+        query_norm = query_vector.reshape(-1).astype('float32')
+        
+        scored_results = []
+        for faiss_id in allowed_faiss_ids:
+            if faiss_id not in self.id_map:
+                continue
+            
+            target_vector = self.get_vector_by_id(faiss_id)
+            if target_vector is None:
+                continue
+            
+            score = float(np.dot(query_norm, target_vector.reshape(-1)))
+            scored_results.append((self.id_map[faiss_id], score))
+        
+        # Sort by score descending
+        scored_results.sort(key=lambda x: x[1], reverse=True)
+        
+        # Return top-k
+        top_k = scored_results[:k]
+        return [r[0] for r in top_k], [r[1] for r in top_k]
+    
+    def _search_filtered_batch(
+        self, 
+        query_vector: np.ndarray, 
+        k: int, 
+        allowed_faiss_ids: List[int],
+        ef_search: int = None
+    ) -> Tuple[List[str], List[float]]:
+        """
+        Batch filtered search for larger filter sets.
+        Uses FAISS IDSelectorBatch for efficient filtering.
+        """
+        try:
+            # Create ID selector for allowed IDs
+            id_array = np.array(allowed_faiss_ids, dtype=np.int64)
+            selector = faiss.IDSelectorBatch(id_array)
+            
+            # Create search parameters with selector
+            params = faiss.SearchParametersIVF()
+            params.sel = selector
+            
+            if ef_search is not None and self.index_type == "hnsw":
+                self._set_ef_search(ef_search)
+            
+            query_matrix = query_vector.reshape(1, -1).astype('float32')
+            
+            # Search with selector
+            scores, ids = self.index.search(query_matrix, k, params=params)
+            
+            if ef_search is not None and self.index_type == "hnsw":
+                self._set_ef_search(self.hnsw_ef_search)
+            
+            result_uuids = []
+            result_scores = []
+            
+            for fid, score in zip(ids[0], scores[0]):
+                if fid != -1 and fid in self.id_map:
+                    result_uuids.append(self.id_map[fid])
+                    result_scores.append(float(score))
+            
+            return result_uuids, result_scores
+            
+        except Exception as e:
+            # Fallback to direct method if IDSelectorBatch fails
+            logger.warning(f"IDSelectorBatch failed: {e}, falling back to direct method")
+            return self._search_filtered_direct(query_vector, k, allowed_faiss_ids)
     
     def _set_ef_search(self, ef_search: int):
         """Set efSearch parameter for HNSW index."""

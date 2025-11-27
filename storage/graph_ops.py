@@ -197,6 +197,63 @@ class GraphManager:
             for node in self.graph.nodes()
         }
     
+    def compute_personalized_pagerank(
+        self, 
+        seed_nodes: List[str], 
+        alpha: float = 0.85,
+        weight_by_score: Optional[Dict[str, float]] = None
+    ) -> Dict[str, float]:
+        """
+        Compute Personalized PageRank (PPR) with seeds as personalization.
+        
+        Unlike global PageRank, PPR computes importance RELATIVE to query seeds.
+        Nodes that are well-connected to the seeds get higher scores.
+        
+        This is the key difference:
+        - Global PageRank: "How important is this node overall?"
+        - PPR: "How important is this node relative to my query?"
+        
+        Args:
+            seed_nodes: List of seed node UUIDs (from vector search)
+            alpha: Damping factor (0.85 = 15% chance of teleporting back to seeds)
+            weight_by_score: Optional dict of node UUID -> vector score to weight seeds
+            
+        Returns:
+            Dict mapping node UUID to PPR score (higher = more relevant to query)
+        """
+        if self.graph.number_of_nodes() == 0 or not seed_nodes:
+            return {}
+        
+        # Create personalization vector: weighted by vector scores if provided
+        valid_seeds = [s for s in seed_nodes if self.graph.has_node(s)]
+        if not valid_seeds:
+            return {}
+        
+        if weight_by_score:
+            # Weight seeds by their vector scores
+            total_weight = sum(weight_by_score.get(s, 1.0) for s in valid_seeds)
+            if total_weight > 0:
+                personalization = {s: weight_by_score.get(s, 1.0) / total_weight for s in valid_seeds}
+            else:
+                personalization = {s: 1.0 / len(valid_seeds) for s in valid_seeds}
+        else:
+            # Uniform distribution over seeds
+            personalization = {s: 1.0 / len(valid_seeds) for s in valid_seeds}
+        
+        try:
+            ppr = nx.pagerank(
+                self.graph,
+                alpha=alpha,
+                personalization=personalization,
+                max_iter=PAGERANK_MAX_ITER,
+                tol=PAGERANK_TOL,
+                weight='weight'
+            )
+            return ppr
+        except Exception as e:
+            logger.warning(f"PPR computation failed: {e}, falling back to global PageRank")
+            return self.get_pagerank_scores()
+    
     def get_pagerank_scores(self) -> Dict[str, float]:
         """
         Get PageRank scores with caching.
