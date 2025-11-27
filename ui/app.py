@@ -20,6 +20,27 @@ st.markdown("""
     /* Import modern font */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     
+    /* Smooth transitions globally */
+    *, *::before, *::after {
+        transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    
+    /* Custom scrollbar - dark theme */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+        background: #0a0a0a;
+    }
+    ::-webkit-scrollbar-thumb {
+        background: #2a2a2a;
+        border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: #3a3a3a;
+    }
+    
     /* GLOBAL: Hide ALL Material Symbol text placeholders */
     .material-symbols-rounded,
     span[class*="material-symbols"],
@@ -57,7 +78,7 @@ st.markdown("""
     }
     
     .block-container {
-        padding-top: 1.5rem !important;
+        padding-top: 80px !important;
         padding-bottom: 1.5rem !important;
         padding-left: 3rem !important;
         padding-right: 3rem !important;
@@ -83,12 +104,14 @@ st.markdown("""
     
     /* Gradient background for sidebar - slate black */
     section[data-testid="stSidebar"] {
-        background: #0a0a0a !important;
+        background: rgba(10, 10, 10, 0.95) !important;
         border-right: 1px solid rgba(157, 124, 216, 0.35) !important;
         box-shadow: 4px 0 30px rgba(157, 124, 216, 0.2) !important;
         min-width: 200px !important;
         max-width: 400px !important;
         padding-top: 0 !important;
+        margin-top: 60px !important;
+        height: calc(100vh - 60px) !important;
     }
     /* Enable sidebar resize handle */
     section[data-testid="stSidebar"] [data-testid="stSidebarResizeHandle"] {
@@ -122,6 +145,7 @@ st.markdown("""
         align-items: center !important;
         gap: 8px !important;
         white-space: nowrap !important;
+        cursor: pointer;
     }
     section[data-testid="stSidebar"] .stRadio label p {
         margin: 0 !important;
@@ -133,6 +157,13 @@ st.markdown("""
         color: #ffffff !important;
         background: rgba(157, 124, 216, 0.2) !important;
         box-shadow: 0 0 15px rgba(157, 124, 216, 0.35) !important;
+    }
+    /* Selected nav item */
+    section[data-testid="stSidebar"] .stRadio [data-checked="true"] label,
+    section[data-testid="stSidebar"] .stRadio div[aria-checked="true"] label {
+        background: rgba(157, 124, 216, 0.25) !important;
+        color: #ffffff !important;
+        box-shadow: 0 0 12px rgba(157, 124, 216, 0.3) !important;
     }
     section[data-testid="stSidebar"] h1, 
     section[data-testid="stSidebar"] h2, 
@@ -266,7 +297,13 @@ st.markdown("""
         outline-color: #9d7cd8 !important;
     }
     
-    /* Metrics - dark theme */
+    /* Metrics - dark theme with card styling */
+    [data-testid="stMetric"] {
+        background: rgba(20, 20, 20, 0.6) !important;
+        border-radius: 10px !important;
+        padding: 1rem !important;
+        border: 1px solid rgba(157, 124, 216, 0.15) !important;
+    }
     [data-testid="stMetricValue"] {
         font-size: 1.75rem;
         font-weight: 700;
@@ -276,27 +313,31 @@ st.markdown("""
         font-weight: 500;
         color: #94a3b8 !important;
     }
+    [data-testid="stMetricDelta"] {
+        color: #9d7cd8 !important;
+    }
     
-    /* Modern alerts - slate black */
+    /* Modern alerts - slate black with icons */
     .stAlert {
         border-radius: 12px;
         border: none;
         background: rgba(20, 20, 20, 0.9) !important;
+        padding: 0.875rem 1rem !important;
     }
     .stSuccess {
-        background: rgba(20, 20, 20, 0.9) !important;
-        border-left: 4px solid #9d7cd8 !important;
+        background: rgba(20, 25, 20, 0.9) !important;
+        border-left: 4px solid #7ec97e !important;
     }
     .stError {
-        background: rgba(20, 20, 20, 0.9) !important;
-        border-left: 4px solid #8a7a8a !important;
+        background: rgba(25, 20, 20, 0.9) !important;
+        border-left: 4px solid #c97e7e !important;
     }
     .stWarning {
-        background: rgba(20, 20, 20, 0.9) !important;
-        border-left: 4px solid #9a9080 !important;
+        background: rgba(25, 23, 18, 0.9) !important;
+        border-left: 4px solid #c9b07e !important;
     }
     .stInfo {
-        background: rgba(20, 20, 20, 0.9) !important;
+        background: rgba(20, 20, 25, 0.9) !important;
         border-left: 4px solid #9d7cd8 !important;
     }
     
@@ -312,6 +353,11 @@ st.markdown("""
         padding: 8px 16px;
         font-weight: 500;
         color: #94a3b8 !important;
+        cursor: pointer;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        background: rgba(157, 124, 216, 0.1) !important;
+        color: #cbd5e1 !important;
     }
     .stTabs [data-baseweb="tab"][aria-selected="true"] {
         background: rgba(157, 124, 216, 0.2) !important;
@@ -353,9 +399,22 @@ st.markdown("""
     .stDataFrame {
         border-radius: 12px;
         overflow: hidden;
+        border: 1px solid rgba(157, 124, 216, 0.15) !important;
     }
     .stDataFrame [data-testid="stDataFrameResizable"] {
         background: rgba(15, 15, 15, 0.9) !important;
+    }
+    .stDataFrame thead th {
+        background: rgba(20, 20, 20, 0.95) !important;
+        color: #e2e8f0 !important;
+        font-weight: 600 !important;
+    }
+    .stDataFrame tbody td {
+        color: #cbd5e1 !important;
+        border-color: #1a1a1a !important;
+    }
+    .stDataFrame tbody tr:hover {
+        background: rgba(157, 124, 216, 0.08) !important;
     }
     
     /* Select boxes - slate black */
@@ -365,13 +424,42 @@ st.markdown("""
     [data-baseweb="select"] > div {
         background: rgba(15, 15, 15, 0.9) !important;
         border-color: #2a2a2a !important;
+        border-radius: 8px !important;
+    }
+    [data-baseweb="select"] > div:hover {
+        border-color: #3a3a3a !important;
+    }
+    [data-baseweb="select"] > div:focus-within {
+        border-color: #9d7cd8 !important;
+        box-shadow: 0 0 0 2px rgba(157, 124, 216, 0.2) !important;
+    }
+    
+    /* Dropdown menu styling */
+    [data-baseweb="popover"] {
+        background: #151515 !important;
+        border: 1px solid #2a2a2a !important;
+        border-radius: 8px !important;
+    }
+    [data-baseweb="menu"] {
+        background: #151515 !important;
+    }
+    [data-baseweb="menu"] li {
+        color: #cbd5e1 !important;
+    }
+    [data-baseweb="menu"] li:hover {
+        background: rgba(157, 124, 216, 0.15) !important;
     }
     
     /* Number inputs - slate black */
     .stNumberInput > div > div > input {
         background: rgba(15, 15, 15, 0.9) !important;
         border-color: #2a2a2a !important;
+        border-radius: 8px !important;
         color: #f1f5f9 !important;
+    }
+    .stNumberInput > div > div > input:focus {
+        border-color: #9d7cd8 !important;
+        box-shadow: 0 0 0 2px rgba(157, 124, 216, 0.2) !important;
     }
     
     /* Sliders - slate with purple accent */
@@ -413,6 +501,17 @@ st.markdown("""
     /* Checkbox */
     .stCheckbox label {
         color: #cbd5e1 !important;
+        cursor: pointer;
+    }
+    .stCheckbox label:hover {
+        color: #f1f5f9 !important;
+    }
+    .stCheckbox [data-testid="stCheckbox"] > div:first-child {
+        border-color: #3a3a3a !important;
+    }
+    .stCheckbox [data-testid="stCheckbox"] > div[aria-checked="true"]:first-child {
+        background-color: #9d7cd8 !important;
+        border-color: #9d7cd8 !important;
     }
     
     /* File uploader - slate black */
@@ -530,12 +629,116 @@ st.markdown("""
     .row-widget.stHorizontalBlock {
         gap: 1rem !important;
     }
+    
+    /* Progress bar styling */
+    .stProgress > div > div {
+        background: #2a2a2a !important;
+        border-radius: 10px !important;
+    }
+    .stProgress > div > div > div {
+        background: linear-gradient(90deg, #7e5bbd, #9d7cd8) !important;
+        border-radius: 10px !important;
+    }
+    
+    /* Spinner/loading styling */
+    .stSpinner > div {
+        border-top-color: #9d7cd8 !important;
+    }
+    
+    /* Code blocks */
+    .stCodeBlock {
+        background: #0a0a0a !important;
+        border: 1px solid #2a2a2a !important;
+        border-radius: 8px !important;
+    }
+    pre {
+        background: #0a0a0a !important;
+        color: #e2e8f0 !important;
+    }
+    code {
+        color: #9d7cd8 !important;
+    }
+    
+    /* JSON expander styling */
+    .stJson {
+        background: rgba(15, 15, 15, 0.9) !important;
+        border-radius: 8px !important;
+    }
+    
+    /* Tooltips */
+    [data-baseweb="tooltip"] {
+        background: #1a1a1a !important;
+        border: 1px solid #2a2a2a !important;
+        border-radius: 6px !important;
+        color: #e2e8f0 !important;
+    }
+    
+    /* Link styling */
+    a {
+        color: #9d7cd8 !important;
+        text-decoration: none !important;
+    }
+    a:hover {
+        color: #b08fe8 !important;
+        text-decoration: underline !important;
+    }
+    
+    /* ===== FROSTED GLASS TOP NAVBAR ===== */
+    .top-navbar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 60px;
+        background: rgba(10, 10, 10, 0.8);
+        backdrop-filter: blur(20px) saturate(180%);
+        -webkit-backdrop-filter: blur(20px) saturate(180%);
+        border-bottom: 1px solid rgba(157, 124, 216, 0.25);
+        z-index: 999999;
+        display: flex;
+        align-items: center;
+        padding: 0 2rem;
+        box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4), 0 0 40px rgba(157, 124, 216, 0.08);
+    }
+    .top-navbar .logo {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    .top-navbar .logo-icon {
+        font-size: 28px;
+        line-height: 1;
+    }
+    .top-navbar .logo-text {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #f1f5f9;
+        letter-spacing: -0.02em;
+    }
+    .top-navbar .logo-subtitle {
+        font-size: 0.75rem;
+        color: #94a3b8;
+        margin-left: 12px;
+        padding-left: 12px;
+        border-left: 1px solid #3a3a3a;
+    }
+    
+    section[data-testid="stSidebar"] > div {
+        padding-top: 1.5rem !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🧠 SageDB")
-st.caption("Vector + Graph Native Database")
-st.divider()
+# Inject the top navbar HTML
+st.markdown("""
+<div class="top-navbar">
+    <div class="logo">
+        <span class="logo-icon">🧠</span>
+        <span class="logo-text">SageDB</span>
+        <span class="logo-subtitle">Vector + Graph Native Database</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 # Sidebar Navigation
 st.sidebar.markdown("### Navigation")
