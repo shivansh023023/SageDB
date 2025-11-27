@@ -11,7 +11,7 @@ st.set_page_config(page_title="SageDB UI", layout="wide")
 st.title("SageDB: Vector + Graph Native Database")
 
 # Sidebar Navigation
-page = st.sidebar.selectbox("Navigation", ["Search", "Add Data", "Manage Data", "Graph View", "Data Explorer", "System Health"])
+page = st.sidebar.selectbox("Navigation", ["Search", "Ingest Files", "Add Data", "Manage Data", "Graph View", "Data Explorer", "System Health"])
 
 def check_health():
     try:
@@ -29,6 +29,153 @@ if page == "System Health":
         st.json(health)
     else:
         st.error("Backend is Offline. Please start the server.")
+
+# --- Page: Ingest Files ---
+elif page == "Ingest Files":
+    st.header("📁 Ingest Documents")
+    st.info("Upload text-based files to automatically parse, chunk, embed, and store them with proper graph relationships.")
+    
+    # Get supported types
+    try:
+        res = requests.get(f"{API_URL}/v1/ingest/supported-types")
+        if res.status_code == 200:
+            supported = res.json()
+            st.write(f"**Supported formats:** {', '.join(supported['extensions'].keys())}")
+            st.write(f"**Max file size:** {supported['max_file_size_mb']} MB")
+    except:
+        st.warning("Could not fetch supported types. Backend may be offline.")
+    
+    st.divider()
+    
+    tab1, tab2, tab3 = st.tabs(["📄 Single File", "📚 Batch Upload", "📝 Raw Text"])
+    
+    with tab1:
+        st.subheader("Upload Single File")
+        uploaded_file = st.file_uploader(
+            "Choose a file", 
+            type=['md', 'txt', 'html', 'htm', 'json', 'xml'],
+            key="single_upload"
+        )
+        
+        create_seq_edges = st.checkbox("Create sequential edges (next_chunk)", value=True, key="single_seq")
+        
+        if st.button("Ingest File", type="primary") and uploaded_file:
+            with st.spinner(f"Ingesting {uploaded_file.name}..."):
+                try:
+                    files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
+                    data = {"create_sequential_edges": str(create_seq_edges).lower()}
+                    res = requests.post(f"{API_URL}/v1/ingest/file", files=files, data=data)
+                    
+                    if res.status_code == 200:
+                        result = res.json()
+                        if result['success']:
+                            st.success(f"✅ {result['message']}")
+                            
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("Document ID", result['document_id'])
+                            with col2:
+                                st.metric("Chunks", result['chunks_created'])
+                            with col3:
+                                st.metric("Nodes", result['nodes_created'])
+                            with col4:
+                                st.metric("Edges", result['edges_created'])
+                            
+                            if result.get('processing_time_ms'):
+                                st.write(f"⏱️ Processed in {result['processing_time_ms']:.0f}ms")
+                        else:
+                            st.error(f"❌ {result['message']}")
+                    else:
+                        st.error(f"Error: {res.text}")
+                except Exception as e:
+                    st.error(f"Connection Error: {e}")
+    
+    with tab2:
+        st.subheader("Batch Upload")
+        uploaded_files = st.file_uploader(
+            "Choose multiple files",
+            type=['md', 'txt', 'html', 'htm', 'json', 'xml'],
+            accept_multiple_files=True,
+            key="batch_upload"
+        )
+        
+        create_seq_edges_batch = st.checkbox("Create sequential edges (next_chunk)", value=True, key="batch_seq")
+        
+        if st.button("Ingest All Files", type="primary") and uploaded_files:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            results_container = st.container()
+            
+            with st.spinner(f"Ingesting {len(uploaded_files)} files..."):
+                try:
+                    files = [("files", (f.name, f.getvalue())) for f in uploaded_files]
+                    data = {"create_sequential_edges": str(create_seq_edges_batch).lower()}
+                    res = requests.post(f"{API_URL}/v1/ingest/batch", files=files, data=data)
+                    
+                    if res.status_code == 200:
+                        batch_result = res.json()
+                        
+                        st.success(f"Batch Complete: {batch_result['successful']}/{batch_result['total_files']} succeeded")
+                        
+                        if batch_result['failed'] > 0:
+                            st.warning(f"⚠️ {batch_result['failed']} files failed")
+                        
+                        # Show results summary
+                        with results_container:
+                            for idx, result in enumerate(batch_result['results']):
+                                icon = "✅" if result['success'] else "❌"
+                                with st.expander(f"{icon} {result['filename']}"):
+                                    if result['success']:
+                                        col1, col2, col3 = st.columns(3)
+                                        with col1:
+                                            st.write(f"**Chunks:** {result['chunks_created']}")
+                                        with col2:
+                                            st.write(f"**Nodes:** {result['nodes_created']}")
+                                        with col3:
+                                            st.write(f"**Edges:** {result['edges_created']}")
+                                    else:
+                                        st.error(result['message'])
+                    else:
+                        st.error(f"Error: {res.text}")
+                except Exception as e:
+                    st.error(f"Connection Error: {e}")
+    
+    with tab3:
+        st.subheader("Ingest Raw Text")
+        with st.form("text_ingest_form"):
+            text_content = st.text_area("Text Content", height=200)
+            col1, col2 = st.columns(2)
+            with col1:
+                filename = st.text_input("Filename (optional)", value="input.txt")
+            with col2:
+                file_type = st.selectbox("Content Type", ["txt", "md", "html", "json"])
+            
+            create_seq_edges_text = st.checkbox("Create sequential edges", value=True, key="text_seq")
+            
+            submitted = st.form_submit_button("Ingest Text", type="primary")
+            
+            if submitted and text_content:
+                try:
+                    data = {
+                        "text": text_content,
+                        "filename": filename,
+                        "file_type": file_type,
+                        "create_sequential_edges": str(create_seq_edges_text).lower()
+                    }
+                    res = requests.post(f"{API_URL}/v1/ingest/text", data=data)
+                    
+                    if res.status_code == 200:
+                        result = res.json()
+                        if result['success']:
+                            st.success(f"✅ {result['message']}")
+                            st.write(f"Created {result['chunks_created']} chunks, {result['nodes_created']} nodes, {result['edges_created']} edges")
+                        else:
+                            st.error(f"❌ {result['message']}")
+                    else:
+                        st.error(f"Error: {res.text}")
+                except Exception as e:
+                    st.error(f"Connection Error: {e}")
 
 # --- Page: Add Data ---
 elif page == "Add Data":

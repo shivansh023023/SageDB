@@ -15,6 +15,7 @@ from storage.sqlite_ops import sqlite_manager
 from storage.vector_ops import vector_index
 from storage.graph_ops import graph_manager
 from api.benchmark import calculate_metrics
+from ingestion.config import MINIMUM_RELEVANCE_THRESHOLD
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -195,9 +196,13 @@ def vector_search(query: VectorSearchQuery):
         if not uuids:
             return SearchResponse(results=[], count=0)
         
-        # Hydrate with metadata
+        # Hydrate with metadata and apply relevance filtering
         results = []
         for uuid_str, score in zip(uuids, scores):
+            # Filter out low relevance results
+            if score < MINIMUM_RELEVANCE_THRESHOLD:
+                continue
+                
             node_data = sqlite_manager.get_node(uuid_str)
             if node_data:
                 results.append({
@@ -290,8 +295,14 @@ def hybrid_search(query: SearchQuery):
             beta=beta
         )
         
-        # 8. Top K
-        final_results = fused_results[:query.top_k]
+        # 8. Filter out low relevance results
+        filtered_results = [
+            r for r in fused_results 
+            if r.get('score', 0) >= MINIMUM_RELEVANCE_THRESHOLD
+        ]
+        
+        # 9. Top K
+        final_results = filtered_results[:query.top_k]
         
         return SearchResponse(results=final_results, count=len(final_results))
         

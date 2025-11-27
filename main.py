@@ -6,6 +6,7 @@ import glob
 
 from config import DATA_DIR
 from api.routes import router
+from ingestion.router import router as ingestion_router
 from core.embedding import embedding_service
 from storage.sqlite_ops import sqlite_manager
 from storage.vector_ops import vector_index
@@ -99,6 +100,7 @@ def rebuild_faiss_from_sqlite():
 
 
 app.include_router(router)
+app.include_router(ingestion_router)
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
