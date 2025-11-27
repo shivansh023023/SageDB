@@ -46,11 +46,37 @@ class SearchQuery(BaseModel):
     alpha: float = Field(0.7, ge=0.0, le=1.0)
     beta: float = Field(0.3, ge=0.0, le=1.0)
 
-    @validator('beta')
-    def validate_weights(cls, v, values):
-        if 'alpha' in values and abs(values['alpha'] + v - 1.0) > 1e-5:
-            raise ValueError('Alpha and Beta must sum to 1.0')
+    # Note: alpha+beta no longer required to sum to 1.0
+    # They are normalized internally to allow flexible weighting
+
+
+class VectorSearchQuery(BaseModel):
+    """Vector-only search query."""
+    text: str = Field(..., min_length=1, max_length=1000)
+    top_k: int = Field(10, ge=1, le=100)
+
+
+class NodeUpdate(BaseModel):
+    """Update node metadata or text."""
+    text: Optional[str] = Field(None, min_length=1, max_length=5000)
+    metadata: Optional[Dict[str, str]] = None
+
+    @validator('text')
+    def validate_text(cls, v):
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError('Text cannot be empty or whitespace only')
         return v
+
+
+class EdgeResponse(BaseModel):
+    """Edge response with ID."""
+    id: int
+    source_id: str
+    target_id: str
+    relation: str
+    weight: float
 
 class SearchResult(BaseModel):
     uuid: str

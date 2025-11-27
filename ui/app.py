@@ -11,7 +11,7 @@ st.set_page_config(page_title="SageDB UI", layout="wide")
 st.title("SageDB: Vector + Graph Native Database")
 
 # Sidebar Navigation
-page = st.sidebar.selectbox("Navigation", ["Add Data", "Search", "Graph View", "Data Explorer", "System Health"])
+page = st.sidebar.selectbox("Navigation", ["Search", "Add Data", "Manage Data", "Graph View", "Data Explorer", "System Health"])
 
 def check_health():
     try:
@@ -64,7 +64,7 @@ elif page == "Add Data":
             source_id = st.text_input("Source Node UUID")
             target_id = st.text_input("Target Node UUID")
             relation = st.text_input("Relation Type", value="related_to")
-            weight = st.slider("Weight", 0.0, 1.0, 0.5)
+            weight = st.slider("Weight", 0.1, 1.0, 0.5)
             submitted_edge = st.form_submit_button("Create Edge")
             
             if submitted_edge:
@@ -77,39 +77,135 @@ elif page == "Add Data":
                     }
                     res = requests.post(f"{API_URL}/v1/edges", json=payload)
                     if res.status_code == 200:
-                        st.success("Edge Created Successfully")
+                        edge_data = res.json()
+                        st.success(f"Edge Created! ID: {edge_data['id']}")
                     else:
                         st.error(f"Error: {res.text}")
                 except Exception as e:
                     st.error(f"Connection Error: {e}")
 
+# --- Page: Manage Data ---
+elif page == "Manage Data":
+    st.header("Manage Data")
+    
+    tab1, tab2 = st.tabs(["Update/Delete Node", "Delete Edge"])
+    
+    with tab1:
+        st.subheader("Update or Delete Node")
+        node_uuid = st.text_input("Node UUID", key="manage_node_uuid")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Update Node**")
+            new_text = st.text_area("New Text (leave empty to keep current)", key="update_text")
+            new_metadata_str = st.text_area("New Metadata JSON (leave empty to keep current)", key="update_meta")
+            
+            if st.button("Update Node"):
+                if not node_uuid:
+                    st.error("Please enter a Node UUID")
+                else:
+                    try:
+                        payload = {}
+                        if new_text.strip():
+                            payload["text"] = new_text
+                        if new_metadata_str.strip():
+                            payload["metadata"] = json.loads(new_metadata_str)
+                        
+                        if not payload:
+                            st.warning("Nothing to update")
+                        else:
+                            res = requests.put(f"{API_URL}/v1/nodes/{node_uuid}", json=payload)
+                            if res.status_code == 200:
+                                st.success("Node updated successfully!")
+                                st.json(res.json())
+                            else:
+                                st.error(f"Error: {res.text}")
+                    except json.JSONDecodeError:
+                        st.error("Invalid JSON for metadata")
+                    except Exception as e:
+                        st.error(f"Connection Error: {e}")
+        
+        with col2:
+            st.write("**Delete Node**")
+            st.warning("⚠️ This will also delete all connected edges!")
+            if st.button("Delete Node", type="primary"):
+                if not node_uuid:
+                    st.error("Please enter a Node UUID")
+                else:
+                    try:
+                        res = requests.delete(f"{API_URL}/v1/nodes/{node_uuid}")
+                        if res.status_code == 200:
+                            st.success("Node deleted successfully!")
+                        else:
+                            st.error(f"Error: {res.text}")
+                    except Exception as e:
+                        st.error(f"Connection Error: {e}")
+    
+    with tab2:
+        st.subheader("Delete Edge")
+        edge_id = st.number_input("Edge ID", min_value=1, step=1, key="delete_edge_id")
+        
+        # Show edge details first
+        if st.button("Lookup Edge"):
+            try:
+                res = requests.get(f"{API_URL}/v1/edges/{int(edge_id)}")
+                if res.status_code == 200:
+                    st.json(res.json())
+                else:
+                    st.error(f"Edge not found: {res.text}")
+            except Exception as e:
+                st.error(f"Connection Error: {e}")
+        
+        if st.button("Delete Edge", type="primary"):
+            try:
+                res = requests.delete(f"{API_URL}/v1/edges/{int(edge_id)}")
+                if res.status_code == 200:
+                    st.success("Edge deleted successfully!")
+                else:
+                    st.error(f"Error: {res.text}")
+            except Exception as e:
+                st.error(f"Connection Error: {e}")
+
 # --- Page: Search ---
 elif page == "Search":
-    st.header("Hybrid Search")
+    st.header("Search")
     
-    st.info("Mechanism: Hybrid Score = (Alpha * Vector Similarity) + (Beta * Graph Centrality)")
-
+    search_type = st.radio("Search Type", ["Hybrid", "Vector Only", "Graph Only"], horizontal=True)
+    
     with st.form("search_form"):
         query = st.text_input("Search Query")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            alpha = st.slider("Vector Weight (Alpha)", 0.0, 1.0, 0.7)
-        with col2:
-            beta = st.slider("Graph Weight (Beta)", 0.0, 1.0, 0.3)
-        with col3:
+        
+        if search_type == "Hybrid":
+            st.info("Hybrid Score = (Alpha × Vector Similarity) + (Beta × Graph Score)")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                alpha = st.slider("Vector Weight (Alpha)", 0.0, 1.0, 0.7)
+            with col2:
+                beta = st.slider("Graph Weight (Beta)", 0.0, 1.0, 0.3)
+            with col3:
+                top_k = st.number_input("Top K", min_value=1, max_value=50, value=5)
+        elif search_type == "Vector Only":
+            st.info("Pure semantic similarity search using embeddings")
+            alpha, beta = 1.0, 0.0
+            top_k = st.number_input("Top K", min_value=1, max_value=50, value=5)
+        else:  # Graph Only
+            st.info("Pure graph-based search using connectivity and centrality")
+            alpha, beta = 0.0, 1.0
             top_k = st.number_input("Top K", min_value=1, max_value=50, value=5)
             
         search_btn = st.form_submit_button("Search")
         
     if search_btn and query:
         try:
-            payload = {
-                "text": query,
-                "alpha": alpha,
-                "beta": beta,
-                "top_k": top_k
-            }
-            res = requests.post(f"{API_URL}/v1/search/hybrid", json=payload)
+            if search_type == "Vector Only":
+                # Use dedicated vector search endpoint
+                payload = {"text": query, "top_k": top_k}
+                res = requests.post(f"{API_URL}/v1/search/vector", json=payload)
+            else:
+                # Use hybrid search endpoint
+                payload = {"text": query, "alpha": alpha, "beta": beta, "top_k": top_k}
+                res = requests.post(f"{API_URL}/v1/search/hybrid", json=payload)
             
             if res.status_code == 200:
                 results = res.json()['results']
@@ -128,10 +224,14 @@ elif page == "Search":
                         with col_b:
                             st.metric("Graph Score", f"{item['graph_score']:.4f}")
                         with col_c:
-                            final_score = (alpha * item['vector_score']) + (beta * item['graph_score'])
-                            st.metric("Hybrid Score", f"{final_score:.4f}")
+                            st.metric("Final Score", f"{item['score']:.4f}")
                         
-                        st.write(f"**Calculation:** `{alpha} * {item['vector_score']:.4f} + {beta} * {item['graph_score']:.4f} = {final_score:.4f}`")
+                        if search_type == "Hybrid":
+                            # Normalize for display
+                            total = alpha + beta
+                            norm_alpha = alpha / total if total > 0 else 0.5
+                            norm_beta = beta / total if total > 0 else 0.5
+                            st.write(f"**Calculation:** `{norm_alpha:.2f} × {item['vector_score']:.4f} + {norm_beta:.2f} × {item['graph_score']:.4f}`")
                         
                         st.json(item['metadata'])
             else:
@@ -148,7 +248,6 @@ elif page == "Graph View":
     
     if st.button("Visualize"):
         try:
-            # If no start node, try to find one via search or just pick one (not implemented in API yet, so user must provide or we search)
             if not start_node:
                 st.warning("Please provide a Start Node UUID. You can find one in the Search tab.")
             else:
@@ -163,7 +262,6 @@ elif page == "Graph View":
                     st.write(f"Subgraph: {len(nodes)} nodes, {len(edges)} edges")
                     
                     if nodes:
-                        # Simple NetworkX Plot
                         G = nx.DiGraph()
                         for n in nodes:
                             G.add_node(n)
@@ -174,7 +272,6 @@ elif page == "Graph View":
                         pos = nx.spring_layout(G)
                         nx.draw(G, pos, with_labels=False, node_color='skyblue', node_size=500, ax=ax)
                         
-                        # Draw labels (UUIDs are long, maybe just first few chars)
                         labels = {n: n[:4] for n in G.nodes()}
                         nx.draw_networkx_labels(G, pos, labels, font_size=8)
                         

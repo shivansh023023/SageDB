@@ -343,10 +343,14 @@ We have successfully built a working prototype that meets the core requirements 
 | `/v1/nodes`                | POST   | Create nodes with automatic embedding generation | ✅     |
 | `/v1/nodes`                | GET    | List all nodes with pagination                   | ✅     |
 | `/v1/nodes/{uuid}`         | GET    | Retrieve single node                             | ✅     |
+| `/v1/nodes/{uuid}`         | PUT    | Update node text/metadata, regenerate embedding  | ✅     |
 | `/v1/nodes/{uuid}`         | DELETE | Delete node from all storage layers              | ✅     |
 | `/v1/edges`                | POST   | Create typed relationships between nodes         | ✅     |
 | `/v1/edges`                | GET    | List all edges with pagination                   | ✅     |
+| `/v1/edges/{edge_id}`      | GET    | Retrieve single edge by ID                       | ✅     |
+| `/v1/edges/{edge_id}`      | DELETE | Delete edge from all storage layers              | ✅     |
 | `/v1/search/hybrid`        | POST   | **Graph-Augmented Hybrid Search** with expansion | ✅     |
+| `/v1/search/vector`        | POST   | **Pure Vector Search** (semantic similarity)     | ✅     |
 | `/v1/search/hybrid/legacy` | POST   | Legacy re-ranking algorithm for comparison       | ✅     |
 | `/v1/search/graph`         | GET    | Subgraph visualization endpoint                  | ✅     |
 | `/v1/benchmark`            | POST   | Calculate Precision/Recall/NDCG metrics          | ✅     |
@@ -494,7 +498,15 @@ Defines the HTTP endpoints.
 
 - **`delete_node`** (`DELETE /v1/nodes/{uuid}`): Removes node from all three storage layers.
 
-- **`create_edge`** (`POST /v1/edges`): Adds a relationship to SQLite and NetworkX.
+- **`update_node`** (`PUT /v1/nodes/{uuid}`): Updates node text and/or metadata. If text is updated, the embedding is regenerated and FAISS is updated.
+
+- **`create_edge`** (`POST /v1/edges`): Adds a relationship to SQLite and NetworkX. Returns the edge ID for future retrieval/deletion.
+
+- **`get_edge`** (`GET /v1/edges/{edge_id}`): Retrieves a single edge by its ID.
+
+- **`delete_edge`** (`DELETE /v1/edges/{edge_id}`): Removes an edge from SQLite and NetworkX.
+
+- **`vector_search`** (`POST /v1/search/vector`): **PURE VECTOR SEARCH** - Returns top-k results ranked purely by cosine similarity. No graph scoring, alpha/beta weights, or expansion. Useful for baseline comparison and semantic-only queries.
 
 - **`hybrid_search`** (`POST /v1/search/hybrid`) **CORE ALGORITHM**:
 
@@ -558,16 +570,23 @@ Ensures thread safety.
 Pydantic models for data validation.
 
 - **`NodeCreate`**: Validates text length and metadata size.
+- **`NodeUpdate`**: Optional fields for updating node text/metadata.
 - **`EdgeCreate`**: Validates UUID format and weight range (0-1).
-- **`SearchQuery`**: Ensures Alpha + Beta sum to 1.0 (roughly).
+- **`EdgeResponse`**: Response schema including edge ID for retrieval/deletion.
+- **`SearchQuery`**: Hybrid search parameters with alpha/beta weights (normalized, no longer required to sum to 1.0).
+- **`VectorSearchQuery`**: Pure vector search parameters (text + top_k only, no alpha/beta).
 
 ### `SageDB/storage/sqlite_ops.py`
 
 Manages the relational database.
 
 - **`SQLiteManager`**: Handles connections to `sagedb.sqlite`.
-- **`_init_db`**: Creates `nodes` and `edges` tables if they don't exist.
+- **`_init_db`**: Creates `nodes` and `edges` tables if they don't exist. Edges table now includes an `id` column (auto-increment primary key).
 - **`add_node`**: Inserts a node and returns its `rowid` (used as the FAISS ID).
+- **`update_node`**: Updates node text and/or metadata by UUID. Returns True if successful.
+- **`add_edge`**: Inserts an edge and returns its `id` (primary key) for retrieval/deletion.
+- **`get_edge`**: Retrieves a single edge by its ID.
+- **`delete_edge`**: Removes an edge by its ID from SQLite.
 - **`get_all_nodes`**: Fetches all nodes with pagination (LIMIT/OFFSET).
 
 ### `SageDB/storage/vector_ops.py`
@@ -606,20 +625,25 @@ Manages the graph structure.
 The frontend dashboard built with Streamlit.
 
 - **Configuration**: API_URL set to `http://localhost:8000`.
-- **Navigation Sidebar**: Page selector with 5 options.
+- **Navigation Sidebar**: Page selector with 6 options.
 - **Pages**:
   - **System Health**: Shows backend status and node/edge counts via `/health`.
   - **Add Data**:
     - Tab 1: Form to create nodes (text, type, metadata JSON).
     - Tab 2: Form to create edges (source UUID, target UUID, relation, weight).
+  - **Manage Data** (NEW):
+    - Tab 1: Update or delete nodes - update text/metadata, or delete entirely.
+    - Tab 2: Delete edges - lookup edge by ID and delete.
   - **Search**:
+    - **Search Type Selector**: Radio buttons for Hybrid, Vector Only, or Graph Only.
     - Text input for query.
-    - Sliders for Alpha (vector weight) and Beta (graph weight).
+    - Sliders for Alpha (vector weight) and Beta (graph weight) - only shown for Hybrid mode.
     - Number input for top_k results.
+    - **Vector Only mode**: Uses dedicated `/v1/search/vector` endpoint for pure semantic search.
     - Results display with expandable cards showing:
       - UUID, full text, metadata
-      - **Scoring Breakdown**: Vector Score, Graph Score, Hybrid Score in columns
-      - Score calculation formula display
+      - **Scoring Breakdown**: Vector Score, Graph Score, Final Score in columns
+      - Score calculation formula display (for hybrid mode)
   - **Graph View**:
     - Input for start node UUID and depth slider.
     - Matplotlib visualization using `nx.spring_layout`.
@@ -799,18 +823,20 @@ Integration tests.
 
 ### 3. Search Demo (Vector-Only)
 
+- Navigate to "Search" tab
+- Select "Vector Only" search type
 - Search query: "neural networks"
-- Set `alpha=1.0, beta=0.0`
-- Show results ranked purely by semantic similarity
+- Show results ranked purely by semantic similarity (uses `/v1/search/vector` endpoint)
 
 ### 4. Search Demo (Graph-Only)
 
+- Select "Graph Only" search type
 - Same query: "neural networks"
-- Set `alpha=0.0, beta=1.0`
 - Show how hub nodes (like "Machine Learning") rank higher due to centrality
 
 ### 5. Search Demo (Hybrid)
 
+- Select "Hybrid" search type
 - Same query: "neural networks"
 - Set `alpha=0.7, beta=0.3` (default)
 - Show how results balance semantic relevance + structural importance
@@ -825,10 +851,19 @@ Integration tests.
 
 ### 7. CRUD Operations
 
+- Navigate to "Add Data" tab
 - Create a new node: "Transformer Architecture"
 - Create edges: "Transformer" → "Attention Mechanism"
 - Search for "attention" and show it now returns the new node
 - This demonstrates the system is live and mutable
+
+### 8. Data Management
+
+- Navigate to "Manage Data" tab
+- **Update Node**: Update the text or metadata of an existing node
+- **Delete Edge**: Lookup an edge by ID and delete it
+- **Delete Node**: Delete a node (also removes connected edges)
+- This demonstrates full CRUD capabilities
 
 ---
 
@@ -945,6 +980,12 @@ Integration tests.
 | Graph Scoring (min distance only)   | ✅ RESOLVED    | Implemented weighted average distance + relationship-aware scoring  |
 | FAISS/SQLite Sync                   | ✅ RESOLVED    | Auto-rebuild on startup via `rebuild_faiss_from_sqlite()`           |
 | Graph Expansion (only re-ranking)   | ✅ RESOLVED    | BFS expansion discovers new candidates via `expand_from_seeds()`    |
+| Missing PUT /nodes/{id}             | ✅ RESOLVED    | Added `update_node` endpoint for updating text/metadata             |
+| Missing DELETE /edges/{id}          | ✅ RESOLVED    | Added `delete_edge` endpoint with edge ID support                   |
+| Missing GET /edges/{id}             | ✅ RESOLVED    | Added `get_edge` endpoint for single edge retrieval                 |
+| Missing POST /search/vector         | ✅ RESOLVED    | Added dedicated vector-only search endpoint                         |
+| Edge table has no ID                | ✅ RESOLVED    | Added `id` column to edges table for CRUD operations                |
+| Alpha+Beta must sum to 1.0          | ✅ RESOLVED    | Relaxed constraint - weights are now normalized in fusion           |
 | FAISS Index Type (O(N) brute-force) | ⚠️ KNOWN       | Using `IndexFlatIP` for 100% recall. Switch to HNSW for >100K nodes |
 | In-Memory Graph (RAM limits)        | ⚠️ KNOWN       | NetworkX in-memory. Would need disk-based DB for >100K nodes        |
 | Ground Truth for Benchmark          | ⚠️ PENDING     | `/v1/benchmark` endpoint ready, need labeled data                   |
@@ -959,6 +1000,12 @@ Integration tests.
 | Relationship-aware scoring                    | ✅ DONE | `get_relationship_score` with edge type weights |
 | Auto-rebuild FAISS from SQLite                | ✅ DONE | `rebuild_faiss_from_sqlite()` on startup        |
 | Batch vector similarity                       | ✅ DONE | `batch_compute_similarity` for efficiency       |
+| Full CRUD for nodes (including UPDATE)        | ✅ DONE | `PUT /v1/nodes/{uuid}` with re-embedding        |
+| Full CRUD for edges (GET/DELETE by ID)        | ✅ DONE | Edge ID column + endpoints                      |
+| Pure vector search endpoint                   | ✅ DONE | `POST /v1/search/vector`                        |
+| Flexible alpha/beta weights                   | ✅ DONE | Weights normalized, no sum-to-1 requirement     |
+| UI: Manage Data page                          | ✅ DONE | Update/Delete nodes, Delete edges               |
+| UI: Search type selector                      | ✅ DONE | Hybrid / Vector Only / Graph Only modes         |
 | Multi-hop reasoning path                      | ❌ TODO | Show traversal path in results                  |
 | Relationship filtering                        | ❌ TODO | Filter by edge types in API                     |
 | CLI tool                                      | ❌ TODO | For scripted querying                           |

@@ -4,7 +4,10 @@ import uuid
 import logging
 import os
 
-from models.api_schemas import NodeCreate, NodeResponse, EdgeCreate, SearchQuery, SearchResponse, BenchmarkRequest
+from models.api_schemas import (
+    NodeCreate, NodeResponse, NodeUpdate, EdgeCreate, EdgeResponse,
+    SearchQuery, VectorSearchQuery, SearchResponse, BenchmarkRequest
+)
 from core.lock import read_locked, write_locked
 from core.embedding import embedding_service
 from core.fusion import hybrid_fusion
@@ -59,6 +62,42 @@ def get_node(node_uuid: str):
         raise HTTPException(status_code=404, detail="Node not found")
     return NodeResponse(**node_data)
 
+@router.put("/v1/nodes/{node_uuid}")
+@write_locked
+def update_node(node_uuid: str, update: NodeUpdate):
+    """Update node text and/or metadata. If text is updated, embedding is regenerated."""
+    try:
+        # Check if node exists
+        existing = sqlite_manager.get_node(node_uuid)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Node not found")
+        
+        # Update in SQLite
+        updated = sqlite_manager.update_node(
+            node_uuid, 
+            text=update.text, 
+            metadata=update.metadata
+        )
+        
+        if not updated:
+            raise HTTPException(status_code=404, detail="Node not found")
+        
+        # If text changed, regenerate embedding
+        if update.text is not None:
+            new_vector = embedding_service.encode(update.text)
+            vector_index.remove_vector(existing['faiss_id'])
+            vector_index.add_vector(new_vector, existing['faiss_id'], node_uuid)
+        
+        # Return updated node
+        updated_node = sqlite_manager.get_node(node_uuid)
+        return NodeResponse(**updated_node)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating node: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.delete("/v1/nodes/{node_uuid}")
 @write_locked
 def delete_node(node_uuid: str):
@@ -81,27 +120,113 @@ def delete_node(node_uuid: str):
         logger.error(f"Error deleting node: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/v1/edges")
+@router.post("/v1/edges", response_model=EdgeResponse)
 @write_locked
 def create_edge(edge: EdgeCreate):
     try:
-        # 1. Add to SQLite
-        sqlite_manager.add_edge(edge.source_id, edge.target_id, edge.relation, edge.weight)
+        # 1. Add to SQLite (returns edge ID)
+        edge_id = sqlite_manager.add_edge(edge.source_id, edge.target_id, edge.relation, edge.weight)
         
         # 2. Add to NetworkX
         graph_manager.add_edge(edge.source_id, edge.target_id, edge.relation, edge.weight)
         
-        return {"status": "created", "edge": edge.dict()}
+        return EdgeResponse(
+            id=edge_id,
+            source_id=edge.source_id,
+            target_id=edge.target_id,
+            relation=edge.relation,
+            weight=edge.weight
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error creating edge: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/v1/edges/{edge_id}", response_model=EdgeResponse)
+@read_locked
+def get_edge(edge_id: int):
+    """Get edge by ID."""
+    edge_data = sqlite_manager.get_edge(edge_id)
+    if not edge_data:
+        raise HTTPException(status_code=404, detail="Edge not found")
+    return EdgeResponse(**edge_data)
+
+@router.delete("/v1/edges/{edge_id}")
+@write_locked
+def delete_edge(edge_id: int):
+    """Delete edge by ID."""
+    try:
+        # Get edge data first for NetworkX removal
+        edge_data = sqlite_manager.get_edge(edge_id)
+        if not edge_data:
+            raise HTTPException(status_code=404, detail="Edge not found")
+        
+        # Remove from SQLite
+        deleted = sqlite_manager.delete_edge(edge_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Edge not found")
+        
+        # Remove from NetworkX (if edge exists)
+        try:
+            if graph_manager.graph.has_edge(edge_data['source_id'], edge_data['target_id']):
+                graph_manager.graph.remove_edge(edge_data['source_id'], edge_data['target_id'])
+        except Exception:
+            pass  # Edge might not exist in graph
+        
+        return {"status": "deleted", "id": edge_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting edge: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/v1/search/vector", response_model=SearchResponse)
+@read_locked
+def vector_search(query: VectorSearchQuery):
+    """Vector-only search using cosine similarity."""
+    try:
+        # Encode query
+        query_vector = embedding_service.encode(query.text)
+        
+        # FAISS Search
+        uuids, scores = vector_index.search(query_vector, k=query.top_k)
+        
+        if not uuids:
+            return SearchResponse(results=[], count=0)
+        
+        # Hydrate with metadata
+        results = []
+        for uuid_str, score in zip(uuids, scores):
+            node_data = sqlite_manager.get_node(uuid_str)
+            if node_data:
+                results.append({
+                    "uuid": uuid_str,
+                    "text": node_data['text'],
+                    "score": float(score),
+                    "vector_score": float(score),
+                    "graph_score": 0.0,  # Not used in vector-only search
+                    "metadata": node_data['metadata']
+                })
+        
+        return SearchResponse(results=results, count=len(results))
+        
+    except Exception as e:
+        logger.error(f"Error in vector search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/v1/search/hybrid", response_model=SearchResponse)
 @read_locked
 def hybrid_search(query: SearchQuery):
     try:
+        # Normalize alpha/beta if they don't sum to 1.0
+        total = query.alpha + query.beta
+        if total > 0:
+            alpha = query.alpha / total
+            beta = query.beta / total
+        else:
+            alpha, beta = 0.5, 0.5
+        
         # 1. Encode query
         query_vector = embedding_service.encode(query.text)
         
@@ -157,12 +282,12 @@ def hybrid_search(query: SearchQuery):
             )
             graph_scores[uuid_str] = graph_breakdown['combined']
             
-        # 7. Fusion
+        # 7. Fusion (using normalized alpha/beta)
         fused_results = hybrid_fusion(
             all_candidates, 
             graph_scores, 
-            alpha=query.alpha, 
-            beta=query.beta
+            alpha=alpha, 
+            beta=beta
         )
         
         # 8. Top K
