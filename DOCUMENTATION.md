@@ -338,28 +338,28 @@ We have successfully built a working prototype that meets the core requirements 
 
 #### Backend API (FastAPI)
 
-| Endpoint                   | Method | Description                                      | Status |
-| -------------------------- | ------ | ------------------------------------------------ | ------ |
-| `/v1/nodes`                | POST   | Create nodes with automatic embedding generation | ✅     |
-| `/v1/nodes`                | GET    | List all nodes with pagination                   | ✅     |
-| `/v1/nodes/{uuid}`         | GET    | Retrieve single node                             | ✅     |
-| `/v1/nodes/{uuid}`         | PUT    | Update node text/metadata, regenerate embedding  | ✅     |
-| `/v1/nodes/{uuid}`         | DELETE | Delete node from all storage layers              | ✅     |
-| `/v1/edges`                | POST   | Create typed relationships between nodes         | ✅     |
-| `/v1/edges`                | GET    | List all edges with pagination                   | ✅     |
-| `/v1/edges/{edge_id}`      | GET    | Retrieve single edge by ID                       | ✅     |
-| `/v1/edges/{edge_id}`      | DELETE | Delete edge from all storage layers              | ✅     |
-| `/v1/search/hybrid`        | POST   | **Graph-Augmented Hybrid Search** with expansion | ✅     |
-| `/v1/search/vector`        | POST   | **Pure Vector Search** (semantic similarity)     | ✅     |
-| `/v1/search/hybrid/legacy` | POST   | Legacy re-ranking algorithm for comparison       | ✅     |
-| `/v1/search/graph`         | GET    | Subgraph visualization endpoint                  | ✅     |
-| `/v1/benchmark`            | POST   | Calculate Precision/Recall/NDCG metrics          | ✅     |
-| `/v1/admin/snapshot`       | POST   | Persist FAISS and Graph to disk                  | ✅     |
-| `/health`                  | GET    | System health check                              | ✅     |
-| `/v1/ingest/file`          | POST   | **Ingest single file** (md, txt, html, json, xml) | ✅     |
-| `/v1/ingest/batch`         | POST   | **Batch ingest multiple files**                  | ✅     |
-| `/v1/ingest/text`          | POST   | **Ingest raw text** directly                     | ✅     |
-| `/v1/ingest/supported-types` | GET  | Get supported file types and limits              | ✅     |
+| Endpoint                     | Method | Description                                       | Status |
+| ---------------------------- | ------ | ------------------------------------------------- | ------ |
+| `/v1/nodes`                  | POST   | Create nodes with automatic embedding generation  | ✅     |
+| `/v1/nodes`                  | GET    | List all nodes with pagination                    | ✅     |
+| `/v1/nodes/{uuid}`           | GET    | Retrieve single node                              | ✅     |
+| `/v1/nodes/{uuid}`           | PUT    | Update node text/metadata, regenerate embedding   | ✅     |
+| `/v1/nodes/{uuid}`           | DELETE | Delete node from all storage layers               | ✅     |
+| `/v1/edges`                  | POST   | Create typed relationships between nodes          | ✅     |
+| `/v1/edges`                  | GET    | List all edges with pagination                    | ✅     |
+| `/v1/edges/{edge_id}`        | GET    | Retrieve single edge by ID                        | ✅     |
+| `/v1/edges/{edge_id}`        | DELETE | Delete edge from all storage layers               | ✅     |
+| `/v1/search/hybrid`          | POST   | **Graph-Augmented Hybrid Search** with expansion  | ✅     |
+| `/v1/search/vector`          | POST   | **Pure Vector Search** (semantic similarity)      | ✅     |
+| `/v1/search/hybrid/legacy`   | POST   | Legacy re-ranking algorithm for comparison        | ✅     |
+| `/v1/search/graph`           | GET    | Subgraph visualization endpoint                   | ✅     |
+| `/v1/benchmark`              | POST   | Calculate Precision/Recall/NDCG metrics           | ✅     |
+| `/v1/admin/snapshot`         | POST   | Persist FAISS and Graph to disk                   | ✅     |
+| `/health`                    | GET    | System health check                               | ✅     |
+| `/v1/ingest/file`            | POST   | **Ingest single file** (md, txt, html, json, xml) | ✅     |
+| `/v1/ingest/batch`           | POST   | **Batch ingest multiple files**                   | ✅     |
+| `/v1/ingest/text`            | POST   | **Ingest raw text** directly                      | ✅     |
+| `/v1/ingest/supported-types` | GET    | Get supported file types and limits               | ✅     |
 
 #### Ingestion Pipeline (NEW)
 
@@ -370,6 +370,7 @@ File/Text → Parser → Chunker → Embedder → Storage → Relationships
 ```
 
 **Supported Formats:**
+
 - **Markdown** (`.md`, `.markdown`): Uses `markdown-it-py` for AST parsing, preserves headers as hierarchy
 - **HTML** (`.html`, `.htm`): Uses BeautifulSoup4, extracts semantic tags (article, section, p)
 - **Plain Text** (`.txt`): Uses NLTK for sentence boundary detection, splits by paragraphs
@@ -377,6 +378,7 @@ File/Text → Parser → Chunker → Embedder → Storage → Relationships
 - **XML** (`.xml`): Parses text content from elements
 
 **Key Features:**
+
 - **Semantic Chunking**: Respects sentence boundaries, configurable token limits and overlap
 - **Only Content-Bearing Nodes**: No empty header nodes - sections must have actual content
 - **Hierarchy Preservation**: Document structure stored as metadata, creates `section_of` edges
@@ -386,12 +388,12 @@ File/Text → Parser → Chunker → Embedder → Storage → Relationships
 - **Relevance Filtering**: Search results below 0.25 similarity are filtered out
 
 **Edge Weight System:**
-| Edge Type     | Weight | Purpose                                |
+| Edge Type | Weight | Purpose |
 | ------------- | ------ | -------------------------------------- |
-| `chunk_of`    | 1.0    | Chunk belongs to document (strongest) |
-| `section_of`  | 0.98   | Hierarchical section relationship     |
-| `follows`     | 0.95   | Sequential document order             |
-| `next_chunk`  | 0.85   | Consecutive chunks in same section    |
+| `chunk_of` | 1.0 | Chunk belongs to document (strongest) |
+| `section_of` | 0.98 | Hierarchical section relationship |
+| `follows` | 0.95 | Sequential document order |
+| `next_chunk` | 0.85 | Consecutive chunks in same section |
 
 #### Storage Engines
 
