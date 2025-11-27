@@ -100,13 +100,13 @@ flowchart TB
         File["📄 Document\n(PDF, TXT, MD)"] --> Chunker["✂️ Semantic Chunker\n(Header-aware)"]
         Chunker --> Chunks["📦 Chunks\n+ Metadata"]
     end
-    
+
     subgraph STORAGE["💾 TRIPLE STORAGE (Atomic)"]
         Chunks --> SQLite[("🗄️ SQLite\n(Source of Truth)")]
         SQLite --> FAISS["🔍 FAISS\n(HNSW Index)"]
         SQLite --> Graph["🕸️ NetworkX\n(DiGraph)"]
     end
-    
+
     subgraph RETRIEVAL["🔎 HYBRID RETRIEVAL"]
         Query["🔤 Query"] --> Embed["🧠 Embedding\n(MiniLM-L6-v2)"]
         Embed --> VectorSearch["📐 Vector Search\n(Top-K Seeds)"]
@@ -114,12 +114,12 @@ flowchart TB
         Expand --> PPR["⭐ Personalized\nPageRank"]
         PPR --> Fusion["⚡ Late Fusion\nα·Vector + β·Graph"]
     end
-    
+
     subgraph OUTPUT["📤 OUTPUT"]
         Fusion --> Dedup["🧹 Deduplication\n(Hash + Semantic)"]
         Dedup --> Results["📊 Ranked Results\n+ Reasoning Trace"]
     end
-    
+
     FAISS -.-> VectorSearch
     Graph -.-> Expand
     Graph -.-> PPR
@@ -129,7 +129,7 @@ flowchart TB
 
 1. **Ingestion**: Documents are split into semantic chunks using header-aware chunking
 2. **Storage**: Chunks are atomically written to SQLite (source of truth), then indexed in FAISS (vectors) and NetworkX (graph)
-3. **Retrieval**: 
+3. **Retrieval**:
    - Query → Embedding → Vector search finds initial "seed" candidates
    - Graph expansion explores 2-hop neighborhood of seeds
    - Personalized PageRank scores nodes based on query relevance
@@ -163,15 +163,15 @@ Instead of simple degree centrality, we use Google's PageRank algorithm:
 
 ## 🚀 Production RAG Features
 
-| Feature | Description | Benefit |
-|---------|-------------|---------|
-| **Personalized PageRank** | Query-aware graph scoring | Better relevance for structural queries |
-| **Query Decomposition** | Splits complex queries (e.g., "Compare X and Y") | Handles multi-entity questions |
-| **RRF Fusion** | Reciprocal Rank Fusion for sub-queries | Prevents garbage dilution |
-| **Search Cache** | LRU cache with 5-min TTL | ~100x faster for repeated queries |
-| **Semantic Dedup** | Hash + cosine similarity | Removes near-duplicates |
-| **Reasoning Trace** | Step-by-step retrieval explanation | Explainable AI for judges |
-| **Streaming Search** | SSE endpoint for real-time results | Better UX for large result sets |
+| Feature                   | Description                                      | Benefit                                 |
+| ------------------------- | ------------------------------------------------ | --------------------------------------- |
+| **Personalized PageRank** | Query-aware graph scoring                        | Better relevance for structural queries |
+| **Query Decomposition**   | Splits complex queries (e.g., "Compare X and Y") | Handles multi-entity questions          |
+| **RRF Fusion**            | Reciprocal Rank Fusion for sub-queries           | Prevents garbage dilution               |
+| **Search Cache**          | LRU cache with 5-min TTL                         | ~100x faster for repeated queries       |
+| **Semantic Dedup**        | Hash + cosine similarity                         | Removes near-duplicates                 |
+| **Reasoning Trace**       | Step-by-step retrieval explanation               | Explainable AI for judges               |
+| **Streaming Search**      | SSE endpoint for real-time results               | Better UX for large result sets         |
 
 ## ⚖️ License
 

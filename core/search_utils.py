@@ -122,6 +122,7 @@ def decompose_query(query: str) -> List[str]:
     Handles patterns like:
     - "Compare X and Y" -> ["X", "Y"]
     - "Compare X and Y's education" -> ["X education", "Y education"] (distributive!)
+    - "What is the similarity/difference/relationship between X and Y" -> ["X", "Y"]
     - "X vs Y" -> ["X", "Y"]
     - "What is X and how does it relate to Y" -> ["What is X", "how does it relate to Y"]
     
@@ -132,6 +133,21 @@ def decompose_query(query: str) -> List[str]:
         List of sub-queries (may be just the original query if no decomposition)
     """
     sub_queries = []
+    
+    # Pattern 0: "What is the [relationship-word] between X and Y" -> ["X", "Y"]
+    # Also handles: "What is the same thing about X and Y" -> ["X", "Y"]
+    between_match = re.match(
+        r'.*(?:similarity|difference|relationship|connection|relation|commonality|distinction|same|common|shared)(?:\s+thing)?\s+(?:between|about|in)\s+(.+?)\s+and\s+(.+)',
+        query,
+        re.IGNORECASE
+    )
+    if between_match:
+        entity1 = between_match.group(1).strip()
+        entity2 = between_match.group(2).strip()
+        sub_queries.append(entity1)
+        sub_queries.append(entity2)
+        logger.info(f"Query decomposed (between/about): {query} -> {sub_queries}")
+        return sub_queries
     
     # Pattern 1: "Compare X and Y['s] [attribute]" (distributive attribute handling)
     compare_match = re.match(
@@ -232,8 +248,11 @@ def merge_sub_query_results(
     
     # Track RRF scores and result data
     rrf_scores: Dict[str, float] = {}
+    original_scores: Dict[str, float] = {}  # Keep max original score for display
     result_map: Dict[str, Dict[str, Any]] = {}
     subquery_attribution: Dict[str, List[int]] = {}  # Track which sub-queries found each result
+    
+    num_subqueries = len(all_results)
     
     # Calculate RRF scores
     for subquery_idx, results in enumerate(all_results):
@@ -245,8 +264,12 @@ def merge_sub_query_results(
             
             if uuid not in rrf_scores:
                 rrf_scores[uuid] = 0.0
+                original_scores[uuid] = result.get('score', 0)
                 result_map[uuid] = result
                 subquery_attribution[uuid] = []
+            else:
+                # Keep max original score across sub-queries
+                original_scores[uuid] = max(original_scores[uuid], result.get('score', 0))
             
             rrf_scores[uuid] += rrf_contribution
             subquery_attribution[uuid].append(subquery_idx)
@@ -254,18 +277,34 @@ def merge_sub_query_results(
     # Sort by RRF score
     sorted_items = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
     
+    # Normalize RRF scores to 0-1 range for better interpretability
+    # Max possible RRF = num_subqueries * (1 / (k + 1))
+    max_possible_rrf = num_subqueries * (1.0 / (k_constant + 1))
+    
     # Build merged results
     merged = []
     for uuid, rrf_score in sorted_items[:top_k]:
         result = result_map[uuid].copy()
-        result['score'] = rrf_score
+        
+        # Normalize RRF to 0-1 and blend with original score for final display
+        normalized_rrf = rrf_score / max_possible_rrf if max_possible_rrf > 0 else 0
+        
+        # Final score: weighted blend of normalized RRF and original hybrid score
+        # This gives results that appear in MULTIPLE sub-queries a boost
+        subquery_coverage = len(subquery_attribution[uuid]) / num_subqueries
+        blended_score = 0.5 * normalized_rrf + 0.5 * original_scores[uuid]
+        
+        result['score'] = blended_score
         result['rrf_score'] = rrf_score
+        result['normalized_rrf'] = normalized_rrf
+        result['original_score'] = original_scores[uuid]
         result['multi_query_fusion'] = True
         result['subquery_hits'] = len(subquery_attribution[uuid])
+        result['subquery_coverage'] = subquery_coverage
         result['appeared_in_subqueries'] = subquery_attribution[uuid]
         merged.append(result)
     
-    logger.info(f"RRF Fusion: {len(rrf_scores)} unique results from {len(all_results)} sub-queries -> top {len(merged)}")
+    logger.info(f"RRF Fusion: {len(rrf_scores)} unique results from {num_subqueries} sub-queries -> top {len(merged)}")
     return merged
 
 

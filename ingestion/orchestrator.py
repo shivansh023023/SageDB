@@ -5,6 +5,7 @@ import logging
 import os
 import time
 import uuid
+import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 
@@ -320,28 +321,59 @@ class IngestionOrchestrator:
                              config: IngestionConfig) -> int:
         """
         Create relationships between chunks.
+        Enhanced with semantic similarity-based edge weights.
         
         Returns:
             Number of edges created
         """
         edges_created = 0
         
-        # Create sequential relationships (next_chunk)
+        # Compute embeddings for all chunks to enable similarity calculations
+        chunk_texts = [chunk.content for chunk in chunks]
+        chunk_embeddings = self.embedding_service.encode_batch(chunk_texts)
+        
+        # Create sequential relationships (next_chunk) with semantic similarity boost
         if config.create_sequential_edges:
             for i in range(len(chunk_uuids) - 1):
                 try:
+                    # Compute cosine similarity between adjacent chunks
+                    cosine_sim = np.dot(chunk_embeddings[i], chunk_embeddings[i + 1])
+                    
+                    # Dynamic weight: base weight * (1 + similarity_boost)
+                    # High similarity between adjacent chunks = stronger relationship
+                    base_weight = EDGE_WEIGHTS["next_chunk"]
+                    similarity_boost = 0.15 * cosine_sim  # Up to 15% boost
+                    dynamic_weight = min(1.0, base_weight * (1 + similarity_boost))
+                    
                     self.sqlite_manager.add_edge(
                         source_uuid=chunk_uuids[i],
                         target_uuid=chunk_uuids[i + 1],
                         relation="next_chunk",
-                        weight=EDGE_WEIGHTS["next_chunk"]
+                        weight=dynamic_weight
                     )
                     self.graph_manager.add_edge(
                         chunk_uuids[i], chunk_uuids[i + 1],
                         relation="next_chunk",
-                        weight=EDGE_WEIGHTS["next_chunk"]
+                        weight=dynamic_weight
                     )
                     edges_created += 1
+                    
+                    # If similarity is very high (>0.8), add explicit "similar_to" edge
+                    if cosine_sim > 0.80:
+                        sim_weight = EDGE_WEIGHTS["similar_to"] * cosine_sim
+                        self.sqlite_manager.add_edge(
+                            source_uuid=chunk_uuids[i],
+                            target_uuid=chunk_uuids[i + 1],
+                            relation="similar_to",
+                            weight=sim_weight
+                        )
+                        self.graph_manager.add_edge(
+                            chunk_uuids[i], chunk_uuids[i + 1],
+                            relation="similar_to",
+                            weight=sim_weight
+                        )
+                        edges_created += 1
+                        
                 except Exception as e:
                     logger.warning(f"Failed to create next_chunk edge: {e}")
         
@@ -376,6 +408,50 @@ class IngestionOrchestrator:
                 if chunk.title:
                     hierarchy_map[chunk.title] = chunk_uuid
         
+        # Create cross-chunk semantic similarity edges (non-sequential)
+        # Only for chunks that are highly similar but not adjacent
+        SIMILARITY_THRESHOLD = 0.75  # Only create edges for strong semantic overlap
+        for i in range(len(chunk_uuids)):
+            for j in range(i + 2, len(chunk_uuids)):  # Skip adjacent pairs (already handled)
+                try:
+                    cosine_sim = np.dot(chunk_embeddings[i], chunk_embeddings[j])
+                    
+                    if cosine_sim >= SIMILARITY_THRESHOLD:
+                        # Create bidirectional "related_to" edges for cross-references
+                        weight = EDGE_WEIGHTS["related_to"] * cosine_sim
+                        
+                        # Forward edge
+                        self.sqlite_manager.add_edge(
+                            source_uuid=chunk_uuids[i],
+                            target_uuid=chunk_uuids[j],
+                            relation="related_to",
+                            weight=weight
+                        )
+                        self.graph_manager.add_edge(
+                            chunk_uuids[i], chunk_uuids[j],
+                            relation="related_to",
+                            weight=weight
+                        )
+                        edges_created += 1
+                        
+                        # Backward edge
+                        self.sqlite_manager.add_edge(
+                            source_uuid=chunk_uuids[j],
+                            target_uuid=chunk_uuids[i],
+                            relation="related_to",
+                            weight=weight
+                        )
+                        self.graph_manager.add_edge(
+                            chunk_uuids[j], chunk_uuids[i],
+                            relation="related_to",
+                            weight=weight
+                        )
+                        edges_created += 1
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to create related_to edge: {e}")
+        
+        logger.info(f"Created {edges_created} edges with semantic similarity-based weights")
         return edges_created
     
     def ingest_text(self, text: str, source_name: str = "user_input",

@@ -340,7 +340,8 @@ def hybrid_search(query: SearchQuery):
             all_sub_results.append(sub_results)
         
         # Merge sub-query results if decomposed
-        if len(sub_queries) > 1:
+        multi_query_fusion = len(sub_queries) > 1
+        if multi_query_fusion:
             _tm = _time.time()
             merged_results = merge_sub_query_results(all_sub_results, top_k=query.top_k * 2)
             timings['merge_subqueries'] = (_time.time() - _tm) * 1000
@@ -362,10 +363,15 @@ def hybrid_search(query: SearchQuery):
         timings['dedup'] = (_time.time() - _td) * 1000
         
         # 3. Filter by relevance threshold
-        filtered_results = [
-            r for r in merged_results 
-            if r.get('score', 0) >= MINIMUM_RELEVANCE_THRESHOLD
-        ]
+        # NOTE: Skip threshold filter for RRF-fused results (RRF scores are rank-based, not similarity-based)
+        if multi_query_fusion:
+            # RRF already ranked by relevance, just take top results
+            filtered_results = merged_results
+        else:
+            filtered_results = [
+                r for r in merged_results 
+                if r.get('score', 0) >= MINIMUM_RELEVANCE_THRESHOLD
+            ]
         
         # 4. Apply offset pagination and Top K
         final_results = filtered_results[query.offset:query.offset + query.top_k]

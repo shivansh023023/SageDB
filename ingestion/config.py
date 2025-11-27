@@ -25,19 +25,24 @@ SUPPORTED_EXTENSIONS = {
 }
 
 # Edge weights for auto-created relationships
+# Optimized for hybrid semantic + graph search
 EDGE_WEIGHTS: Dict[str, float] = {
     # Parent-child (document structure) - HIGHEST
     "chunk_of": 1.0,          # Chunk belongs to document
-    "section_of": 0.98,       # Section within a larger section
+    "section_of": 0.95,       # Section within a larger section (reduced to prioritize semantic)
     
-    # Sequential (reading order)
-    "next_chunk": 0.85,       # Sequential reading flow
+    # Semantic similarity (auto-detected) - VERY HIGH
+    "similar_to": 0.90,       # Strong semantic overlap (cosine > 0.8)
+    "related_to": 0.75,       # Moderate semantic similarity (cosine > 0.75)
+    
+    # Sequential (reading order) - HIGH
+    "next_chunk": 0.85,       # Sequential reading flow (boosted by similarity in code)
     "previous_chunk": 0.85,   # Backward reference
     
     # Taxonomic (knowledge structure)
-    "is_a": 0.95,             # Classification hierarchy
-    "part_of": 0.93,          # Compositional
-    "instance_of": 0.90,      # Specific instance of concept
+    "is_a": 0.93,             # Classification hierarchy
+    "part_of": 0.90,          # Compositional
+    "instance_of": 0.88,      # Specific instance of concept
     
     # Functional
     "uses": 0.80,
@@ -47,9 +52,7 @@ EDGE_WEIGHTS: Dict[str, float] = {
     
     # Reference
     "references": 0.65,       # Explicit link/citation
-    "related_to": 0.50,       # Generic relationship
     "mentions": 0.40,         # Weak reference
-    "similar_to": 0.35,       # Semantic similarity (auto-detected)
 }
 
 # Minimum relevance threshold for search results

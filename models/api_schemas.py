@@ -144,6 +144,14 @@ class SearchResult(BaseModel):
     retrieval_rank: Optional[int] = Field(None, description="Rank in which this result was retrieved")
     # Reasoning trace for explainability
     reasoning_trace: Optional[List[str]] = Field(None, description="Step-by-step reasoning path showing how this result was found")
+    # Query decomposition fields
+    subquery_hits: Optional[int] = Field(None, description="Number of sub-queries that found this result")
+    subquery_coverage: Optional[float] = Field(None, description="Fraction of sub-queries that found this result (0-1)")
+    appeared_in_subqueries: Optional[List[int]] = Field(None, description="Indices of sub-queries that found this result")
+    multi_query_fusion: Optional[bool] = Field(None, description="Whether this result was fused from multiple sub-queries")
+    original_score: Optional[float] = Field(None, description="Original hybrid score before RRF fusion")
+    rrf_score: Optional[float] = Field(None, description="Raw RRF score")
+    normalized_rrf: Optional[float] = Field(None, description="Normalized RRF score (0-1)")
 
 
 class ReasoningStep(BaseModel):
