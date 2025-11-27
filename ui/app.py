@@ -9,7 +9,7 @@ API_URL = "http://localhost:8000"
 
 st.set_page_config(
     page_title="SageDB UI", 
-    page_icon="🧠",
+    page_icon="S",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -733,7 +733,7 @@ st.markdown("""
 st.markdown("""
 <div class="top-navbar">
     <div class="logo">
-        <span class="logo-icon">🧠</span>
+        <span class="logo-icon">S</span>
         <span class="logo-text">SageDB</span>
         <span class="logo-subtitle">Vector + Graph Native Database</span>
     </div>
@@ -745,13 +745,13 @@ st.sidebar.markdown("### Navigation")
 page = st.sidebar.radio(
     "Go to",
     [
-        "🔍 Search",
-        "📁 Ingest Files", 
-        "➕ Add Data",
-        "⚙️ Manage Data",
-        "🕸️ Graph View",
-        "📊 Data Explorer",
-        "💚 System Health"
+        "Search",
+        "Ingest Files", 
+        "Add Data",
+        "Manage Data",
+        "Graph View",
+        "Data Explorer",
+        "System Health"
     ],
     label_visibility="collapsed"
 )
@@ -764,7 +764,7 @@ def check_health():
         return None
 
 # --- Page: System Health ---
-if page == "💚 System Health":
+if page == "System Health":
     st.header("💚 System Health")
     st.caption("Monitor your database status and system metrics")
     
@@ -772,7 +772,7 @@ if page == "💚 System Health":
     
     if health:
         # Status indicator
-        st.success("🟢 All systems operational")
+        st.success("✅ All systems operational")
         
         st.divider()
         
@@ -840,7 +840,7 @@ if page == "💚 System Health":
             if st.button("🔍 Go to Search", use_container_width=True):
                 st.info("Navigate using the sidebar →")
     else:
-        st.error("🔴 Backend is Offline")
+        st.error("❌ Backend is Offline")
         st.warning("""
         **Unable to connect to the SageDB server.**
         
@@ -856,8 +856,8 @@ if page == "💚 System Health":
             st.rerun()
 
 # --- Page: Ingest Files ---
-elif page == "📁 Ingest Files":
-    st.header("📁 Ingest Documents")
+elif page == "Ingest Files":
+    st.header("Ingest Documents")
     st.caption("Upload and process text-based files into the knowledge graph")
     
     # Status bar
@@ -865,16 +865,16 @@ elif page == "📁 Ingest Files":
     with col_status:
         health = check_health()
         if health:
-            st.success(f"✅ Backend Online • {health.get('nodes', 0)} nodes")
+            st.success(f"Backend Online - {health.get('nodes', 0)} nodes")
         else:
-            st.error("❌ Backend Offline")
+            st.error("Backend Offline")
     
     with col_formats:
-        st.info("📄 Supported: `.md` `.txt` `.html` `.json` `.xml`")
+        st.info("Supported: `.md` `.txt` `.html` `.json` `.xml`")
     
     st.divider()
     
-    tab1, tab2, tab3 = st.tabs(["📄 Single File", "📚 Batch Upload", "📝 Raw Text"])
+    tab1, tab2, tab3 = st.tabs(["Single File", "Batch Upload", "Raw Text"])
     
     with tab1:
         st.markdown("#### Upload a Single File")
@@ -887,9 +887,9 @@ elif page == "📁 Ingest Files":
         )
         
         if uploaded_file:
-            st.caption(f"📎 Selected: **{uploaded_file.name}** ({uploaded_file.size:,} bytes)")
+            st.caption(f"Selected: **{uploaded_file.name}** ({uploaded_file.size:,} bytes)")
         
-        with st.expander("⚙️ Options"):
+        with st.expander("Options"):
             create_seq_edges = st.checkbox(
                 "Create sequential edges between chunks", 
                 value=True, 
@@ -897,7 +897,7 @@ elif page == "📁 Ingest Files":
                 help="Links consecutive chunks with 'next_chunk' relationships"
             )
         
-        if st.button("🚀 Ingest File", type="primary", use_container_width=True, disabled=not uploaded_file):
+        if st.button("Ingest File", type="primary", use_container_width=True, disabled=not uploaded_file):
             if uploaded_file is not None:
                 with st.spinner(f"Processing {uploaded_file.name}..."):
                     try:
@@ -908,19 +908,19 @@ elif page == "📁 Ingest Files":
                         if res.status_code == 200:
                             result = res.json()
                             if result['success']:
-                                st.success(f"✅ {result['message']}")
+                                st.success(f"{result['message']}")
                                 
                                 # Results in a nice grid
                                 cols = st.columns(4)
-                                cols[0].metric("📄 Doc ID", result.get('document_id', 'N/A')[:8] + "...")
-                                cols[1].metric("🧩 Chunks", result.get('chunks_created', 0))
-                                cols[2].metric("🔵 Nodes", result.get('nodes_created', 0))
-                                cols[3].metric("🔗 Edges", result.get('edges_created', 0))
+                                cols[0].metric("Doc ID", result.get('document_id', 'N/A')[:8] + "...")
+                                cols[1].metric("Chunks", result.get('chunks_created', 0))
+                                cols[2].metric("Nodes", result.get('nodes_created', 0))
+                                cols[3].metric("Edges", result.get('edges_created', 0))
                                 
                                 if result.get('processing_time_ms'):
-                                    st.caption(f"⏱️ Processed in {result['processing_time_ms']:.0f}ms")
+                                    st.caption(f"Processed in {result['processing_time_ms']:.0f}ms")
                             else:
-                                st.error(f"❌ {result['message']}")
+                                st.error(f"{result['message']}")
                         else:
                             st.error(f"Error: {res.text}")
                     except Exception as e:
@@ -938,16 +938,16 @@ elif page == "📁 Ingest Files":
         )
         
         if uploaded_files:
-            st.caption(f"📎 Selected: **{len(uploaded_files)} files**")
+            st.caption(f"Selected: **{len(uploaded_files)} files**")
         
-        with st.expander("⚙️ Options"):
+        with st.expander("Options"):
             create_seq_edges_batch = st.checkbox(
                 "Create sequential edges between chunks", 
                 value=True, 
                 key="batch_seq"
             )
         
-        if st.button("🚀 Ingest All Files", type="primary", use_container_width=True, disabled=not uploaded_files):
+        if st.button("Ingest All Files", type="primary", use_container_width=True, disabled=not uploaded_files):
             progress = st.progress(0, text="Starting batch ingestion...")
             
             with st.spinner(f"Processing {len(uploaded_files)} files..."):
@@ -963,14 +963,14 @@ elif page == "📁 Ingest Files":
                         
                         # Summary metrics
                         col1, col2, col3 = st.columns(3)
-                        col1.metric("✅ Succeeded", batch_result['successful'])
-                        col2.metric("❌ Failed", batch_result['failed'])
-                        col3.metric("📊 Total", batch_result['total_files'])
+                        col1.metric("Succeeded", batch_result['successful'])
+                        col2.metric("Failed", batch_result['failed'])
+                        col3.metric("Total", batch_result['total_files'])
                         
                         # Individual results
                         st.divider()
                         for result in batch_result['results']:
-                            icon = "✅" if result['success'] else "❌"
+                            icon = "OK" if result['success'] else "ERR"
                             with st.expander(f"{icon} {result['filename']}"):
                                 if result['success']:
                                     st.markdown(f"**Chunks:** {result['chunks_created']} • **Nodes:** {result['nodes_created']} • **Edges:** {result['edges_created']}")
@@ -999,7 +999,7 @@ elif page == "📁 Ingest Files":
             
             create_seq_edges_text = st.checkbox("Create sequential edges", value=True, key="text_seq")
             
-            submitted = st.form_submit_button("🚀 Ingest Text", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("Ingest Text", type="primary", use_container_width=True)
             
             if submitted:
                 if not text_content.strip():
@@ -1017,21 +1017,21 @@ elif page == "📁 Ingest Files":
                         if res.status_code == 200:
                             result = res.json()
                             if result['success']:
-                                st.success(f"✅ {result['message']}")
-                                st.markdown(f"**Created:** {result['chunks_created']} chunks • {result['nodes_created']} nodes • {result['edges_created']} edges")
+                                st.success(f"{result['message']}")
+                                st.markdown(f"**Created:** {result['chunks_created']} chunks - {result['nodes_created']} nodes - {result['edges_created']} edges")
                             else:
-                                st.error(f"❌ {result['message']}")
+                                st.error(f"{result['message']}")
                         else:
                             st.error(f"Error: {res.text}")
                     except Exception as e:
                         st.error(f"Connection Error: {e}")
 
 # --- Page: Add Data ---
-elif page == "➕ Add Data":
-    st.header("➕ Add Data")
+elif page == "Add Data":
+    st.header("Add Data")
     st.caption("Create new nodes and relationships in your knowledge graph")
     
-    tab1, tab2 = st.tabs(["🔵 Create Node", "🔗 Create Edge"])
+    tab1, tab2 = st.tabs(["Create Node", "Create Edge"])
     
     with tab1:
         st.markdown("#### Create a New Node")
@@ -1039,7 +1039,7 @@ elif page == "➕ Add Data":
         
         with st.form("node_form"):
             text = st.text_area(
-                "📝 Text Content", 
+                "Text Content", 
                 height=150,
                 placeholder="Enter the text content for this node..."
             )
@@ -1047,21 +1047,21 @@ elif page == "➕ Add Data":
             col1, col2 = st.columns(2)
             with col1:
                 node_type = st.selectbox(
-                    "🏷️ Node Type", 
+                    "Node Type", 
                     ["document", "entity", "concept"],
                     help="Categorize this node"
                 )
             with col2:
-                category = st.text_input("📂 Category", value="general")
+                category = st.text_input("Category", value="general")
             
-            with st.expander("🔧 Advanced: Custom Metadata (JSON)"):
+            with st.expander("Advanced: Custom Metadata (JSON)"):
                 metadata_str = st.text_area(
                     "Metadata", 
                     value='{"category": "general"}',
                     help="Add custom key-value pairs"
                 )
             
-            submitted = st.form_submit_button("✨ Create Node", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("Create Node", type="primary", use_container_width=True)
             
             if submitted:
                 if not text.strip():
@@ -1074,7 +1074,7 @@ elif page == "➕ Add Data":
                         res = requests.post(f"{API_URL}/v1/nodes", json=payload)
                         if res.status_code == 200:
                             result = res.json()
-                            st.success("✅ Node created successfully!")
+                            st.success("Node created successfully!")
                             st.code(result['uuid'], language=None)
                             st.caption("Copy this UUID to create edges")
                         else:
@@ -1091,23 +1091,23 @@ elif page == "➕ Add Data":
         with st.form("edge_form"):
             col1, col2 = st.columns(2)
             with col1:
-                source_id = st.text_input("🔵 Source Node UUID", placeholder="Paste UUID here...")
+                source_id = st.text_input("Source Node UUID", placeholder="Paste UUID here...")
             with col2:
-                target_id = st.text_input("🎯 Target Node UUID", placeholder="Paste UUID here...")
+                target_id = st.text_input("Target Node UUID", placeholder="Paste UUID here...")
             
             col3, col4 = st.columns(2)
             with col3:
                 relation = st.selectbox(
-                    "🔗 Relation Type",
+                    "Relation Type",
                     ["related_to", "part_of", "causes", "depends_on", "similar_to", "opposite_of", "custom"],
                     help="Type of relationship"
                 )
                 if relation == "custom":
                     relation = st.text_input("Custom relation name")
             with col4:
-                weight = st.slider("⚖️ Weight", 0.1, 1.0, 0.5, help="Strength of the relationship")
+                weight = st.slider("Weight", 0.1, 1.0, 0.5, help="Strength of the relationship")
             
-            submitted_edge = st.form_submit_button("🔗 Create Edge", type="primary", use_container_width=True)
+            submitted_edge = st.form_submit_button("Create Edge", type="primary", use_container_width=True)
             
             if submitted_edge:
                 if not source_id or not target_id:
@@ -1123,7 +1123,7 @@ elif page == "➕ Add Data":
                         res = requests.post(f"{API_URL}/v1/edges", json=payload)
                         if res.status_code == 200:
                             edge_data = res.json()
-                            st.success(f"✅ Edge created! ID: {edge_data['id']}")
+                            st.success(f"Edge created! ID: {edge_data['id']}")
                             st.markdown(f"**{source_id[:8]}...** → `{relation}` → **{target_id[:8]}...**")
                         else:
                             st.error(f"Error: {res.text}")
@@ -1131,17 +1131,17 @@ elif page == "➕ Add Data":
                         st.error(f"Connection Error: {e}")
 
 # --- Page: Manage Data ---
-elif page == "⚙️ Manage Data":
-    st.header("⚙️ Manage Data")
+elif page == "Manage Data":
+    st.header("Manage Data")
     st.caption("Update or delete existing nodes and edges")
     
-    tab1, tab2 = st.tabs(["🔵 Manage Nodes", "🔗 Manage Edges"])
+    tab1, tab2 = st.tabs(["Manage Nodes", "Manage Edges"])
     
     with tab1:
         st.markdown("#### Node Operations")
         
         node_uuid = st.text_input(
-            "🔍 Enter Node UUID", 
+            "Enter Node UUID", 
             key="manage_node_uuid",
             placeholder="Paste the node UUID here..."
         )
@@ -1152,8 +1152,8 @@ elif page == "⚙️ Manage Data":
                 res = requests.get(f"{API_URL}/v1/nodes/{node_uuid}")
                 if res.status_code == 200:
                     current_node = res.json()
-                    st.success("✅ Node found!")
-                    with st.expander("📄 Current Node Data", expanded=True):
+                    st.success("Node found!")
+                    with st.expander("Current Node Data", expanded=True):
                         st.json(current_node)
                 else:
                     st.warning("Node not found. Check the UUID.")
@@ -1167,7 +1167,7 @@ elif page == "⚙️ Manage Data":
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("##### ✏️ Update Node")
+            st.markdown("##### Update Node")
             new_text = st.text_area(
                 "New Text", 
                 key="update_text",
@@ -1181,7 +1181,7 @@ elif page == "⚙️ Manage Data":
                 height=80
             )
             
-            if st.button("💾 Update Node", use_container_width=True):
+            if st.button("Update Node", use_container_width=True):
                 if not node_uuid:
                     st.error("Please enter a Node UUID")
                 else:
@@ -1197,7 +1197,7 @@ elif page == "⚙️ Manage Data":
                         else:
                             res = requests.put(f"{API_URL}/v1/nodes/{node_uuid}", json=payload)
                             if res.status_code == 200:
-                                st.success("✅ Node updated!")
+                                st.success("Node updated!")
                                 st.rerun()
                             else:
                                 st.error(f"Error: {res.text}")
@@ -1207,19 +1207,19 @@ elif page == "⚙️ Manage Data":
                         st.error(f"Connection Error: {e}")
         
         with col2:
-            st.markdown("##### 🗑️ Delete Node")
-            st.error("⚠️ **Danger Zone**\n\nThis will permanently delete the node and all connected edges!")
+            st.markdown("##### Delete Node")
+            st.error("**Danger Zone**\n\nThis will permanently delete the node and all connected edges!")
             
             confirm = st.checkbox("I understand this action cannot be undone")
             
-            if st.button("🗑️ Delete Node", type="primary", use_container_width=True, disabled=not confirm):
+            if st.button("Delete Node", type="primary", use_container_width=True, disabled=not confirm):
                 if not node_uuid:
                     st.error("Please enter a Node UUID")
                 else:
                     try:
                         res = requests.delete(f"{API_URL}/v1/nodes/{node_uuid}")
                         if res.status_code == 200:
-                            st.success("✅ Node deleted!")
+                            st.success("Node deleted!")
                         else:
                             st.error(f"Error: {res.text}")
                     except Exception as e:
@@ -1230,11 +1230,11 @@ elif page == "⚙️ Manage Data":
         
         col1, col2 = st.columns([2, 1])
         with col1:
-            edge_id = st.number_input("🔍 Edge ID", min_value=1, step=1, key="delete_edge_id")
+            edge_id = st.number_input("Edge ID", min_value=1, step=1, key="delete_edge_id")
         with col2:
             st.write("")  # Spacer
             st.write("")  # Spacer
-            if st.button("🔎 Lookup", use_container_width=True):
+            if st.button("Lookup", use_container_width=True):
                 try:
                     res = requests.get(f"{API_URL}/v1/edges/{int(edge_id)}")
                     if res.status_code == 200:
@@ -1246,17 +1246,17 @@ elif page == "⚙️ Manage Data":
         
         if 'found_edge' in st.session_state:
             edge = st.session_state['found_edge']
-            with st.expander("📄 Edge Details", expanded=True):
+            with st.expander("Edge Details", expanded=True):
                 st.json(edge)
         
         st.divider()
         
         confirm_edge = st.checkbox("I want to delete this edge", key="confirm_edge_delete")
-        if st.button("🗑️ Delete Edge", type="primary", disabled=not confirm_edge):
+        if st.button("Delete Edge", type="primary", disabled=not confirm_edge):
             try:
                 res = requests.delete(f"{API_URL}/v1/edges/{int(edge_id)}")
                 if res.status_code == 200:
-                    st.success("✅ Edge deleted!")
+                    st.success("Edge deleted!")
                     if 'found_edge' in st.session_state:
                         del st.session_state['found_edge']
                 else:
@@ -1265,8 +1265,8 @@ elif page == "⚙️ Manage Data":
                 st.error(f"Connection Error: {e}")
 
 # --- Page: Search ---
-elif page == "🔍 Search":
-    st.header("🔍 Search")
+elif page == "Search":
+    st.header("Search")
     st.caption("Find nodes using semantic similarity and graph relationships")
     
     # Search type selection with better styling
@@ -1277,10 +1277,10 @@ elif page == "🔍 Search":
     st.divider()
     
     with st.form("search_form"):
-        query = st.text_input("🔎 Enter your search query", placeholder="Type something to search...")
+        query = st.text_input("Enter your search query", placeholder="Type something to search...")
         
         # Settings in expandable section
-        with st.expander("⚙️ Search Settings", expanded=(search_type == "Hybrid")):
+        with st.expander("Search Settings", expanded=(search_type == "Hybrid")):
             if search_type == "Hybrid":
                 st.caption("Hybrid Score = (Alpha × Vector) + (Beta × Graph)")
                 col1, col2, col3 = st.columns(3)
@@ -1299,7 +1299,7 @@ elif page == "🔍 Search":
                 alpha, beta = 0.0, 1.0
                 top_k = st.number_input("Results", min_value=1, max_value=50, value=5)
             
-        search_btn = st.form_submit_button("🔍 Search", type="primary", use_container_width=True)
+        search_btn = st.form_submit_button("Search", type="primary", use_container_width=True)
         
     if search_btn and query:
         try:
@@ -1355,34 +1355,34 @@ elif page == "🔍 Search":
             st.error(f"Connection Error: {e}")
 
 # --- Page: Graph View ---
-elif page == "🕸️ Graph View":
-    st.header("🕸️ Graph Visualization")
+elif page == "Graph View":
+    st.header("Graph Visualization")
     st.caption("Explore relationships between nodes in your knowledge graph")
     
     st.divider()
     
     # Configuration section
-    st.markdown("#### 🎯 Visualization Settings")
+    st.markdown("#### Visualization Settings")
     
     col1, col2 = st.columns([3, 1])
     
     with col1:
         start_node = st.text_input(
-            "🔑 Start Node UUID",
+            "Start Node UUID",
             placeholder="Enter a node UUID from Search results...",
             help="The UUID of the node to start graph traversal from"
         )
     
     with col2:
         depth = st.selectbox(
-            "📏 Depth",
+            "Depth",
             options=[1, 2, 3],
             index=1,
             help="How many levels of connections to show"
         )
     
     # Visualization options
-    with st.expander("⚙️ Display Options", expanded=False):
+    with st.expander("Display Options", expanded=False):
         col_opt1, col_opt2 = st.columns(2)
         with col_opt1:
             node_color = st.color_picker("Node Color", "#667eea")
@@ -1393,9 +1393,9 @@ elif page == "🕸️ Graph View":
     
     st.divider()
     
-    if st.button("🚀 Visualize Graph", type="primary", use_container_width=True):
+    if st.button("Visualize Graph", type="primary", use_container_width=True):
         if not start_node:
-            st.warning("⚠️ Please provide a Start Node UUID. You can find one in the **🔍 Search** tab.")
+            st.warning("Please provide a Start Node UUID. You can find one in the Search tab.")
         else:
             try:
                 with st.spinner("Loading graph data..."):
@@ -1410,14 +1410,14 @@ elif page == "🕸️ Graph View":
                     # Stats bar
                     col_s1, col_s2, col_s3 = st.columns(3)
                     with col_s1:
-                        st.metric("📦 Nodes", len(nodes))
+                        st.metric("Nodes", len(nodes))
                     with col_s2:
-                        st.metric("🔗 Edges", len(edges))
+                        st.metric("Edges", len(edges))
                     with col_s3:
-                        st.metric("📏 Depth", depth)
+                        st.metric("Depth", depth)
                     
                     if nodes:
-                        st.markdown("#### 📈 Graph Visualization")
+                        st.markdown("#### Graph Visualization")
                         
                         G = nx.DiGraph()
                         for n in nodes:
@@ -1455,22 +1455,22 @@ elif page == "🕸️ Graph View":
                         st.divider()
                         
                         # Raw data section
-                        with st.expander("📄 Raw Graph Data", expanded=False):
+                        with st.expander("Raw Graph Data", expanded=False):
                             tab_n, tab_e = st.tabs(["Nodes", "Edges"])
                             with tab_n:
                                 st.json(nodes)
                             with tab_e:
                                 st.json(edges)
                     else:
-                        st.info("📭 No nodes found in this subgraph. Try a different UUID or increase depth.")
+                        st.info("No nodes found in this subgraph. Try a different UUID or increase depth.")
                 else:
-                    st.error(f"❌ Error: {res.text}")
+                    st.error(f"Error: {res.text}")
             except Exception as e:
-                st.error(f"❌ Connection Error: {e}")
+                st.error(f"Connection Error: {e}")
 
 # --- Page: Data Explorer ---
-elif page == "📊 Data Explorer":
-    st.header("📊 Data Explorer")
+elif page == "Data Explorer":
+    st.header("Data Explorer")
     st.caption("Browse and explore all data stored in your database")
     
     # Quick stats
@@ -1479,26 +1479,26 @@ elif page == "📊 Data Explorer":
         if health:
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("📦 Total Nodes", health.get('nodes', 0))
+                st.metric("Total Nodes", health.get('nodes', 0))
             with col2:
-                st.metric("🔗 Total Edges", health.get('edges', 0))
+                st.metric("Total Edges", health.get('edges', 0))
             with col3:
-                st.metric("⚡ Status", "Online")
+                st.metric("Status", "Online")
     except:
         pass
     
     st.divider()
     
-    tab1, tab2 = st.tabs(["📦 Nodes", "🔗 Edges"])
+    tab1, tab2 = st.tabs(["Nodes", "Edges"])
     
     with tab1:
-        st.markdown("#### 📦 Node Browser")
+        st.markdown("#### Node Browser")
         
         col_btn, col_search = st.columns([1, 3])
         with col_btn:
-            load_nodes = st.button("🔄 Load Nodes", type="primary", use_container_width=True)
+            load_nodes = st.button("Load Nodes", type="primary", use_container_width=True)
         with col_search:
-            node_filter = st.text_input("🔍 Filter by UUID", placeholder="Type to filter...")
+            node_filter = st.text_input("Filter by UUID", placeholder="Type to filter...")
         
         if load_nodes or 'cached_nodes' in st.session_state:
             if load_nodes:
@@ -1508,9 +1508,9 @@ elif page == "📊 Data Explorer":
                     if res.status_code == 200:
                         st.session_state['cached_nodes'] = res.json()
                     else:
-                        st.error(f"❌ Error fetching nodes: {res.text}")
+                        st.error(f"Error fetching nodes: {res.text}")
                 except Exception as e:
-                    st.error(f"❌ Connection Error: {e}")
+                    st.error(f"Connection Error: {e}")
             
             if 'cached_nodes' in st.session_state:
                 nodes = st.session_state['cached_nodes']
@@ -1519,7 +1519,7 @@ elif page == "📊 Data Explorer":
                 if node_filter:
                     nodes = [n for n in nodes if node_filter.lower() in str(n).lower()]
                 
-                st.success(f"✅ Showing {len(nodes)} nodes")
+                st.success(f"Showing {len(nodes)} nodes")
                 
                 if nodes:
                     # Convert to dataframe for better display
@@ -1532,24 +1532,24 @@ elif page == "📊 Data Explorer":
                     )
                     
                     # Export option
-                    with st.expander("📥 Export Options"):
+                    with st.expander("Export Options"):
                         st.download_button(
-                            label="📥 Download as CSV",
+                            label="Download as CSV",
                             data=df.to_csv(index=False),
                             file_name="sagedb_nodes.csv",
                             mime="text/csv"
                         )
                 else:
-                    st.info("📭 No nodes match your filter.")
+                    st.info("No nodes match your filter.")
                 
     with tab2:
-        st.markdown("#### 🔗 Edge Browser")
+        st.markdown("#### Edge Browser")
         
         col_btn2, col_search2 = st.columns([1, 3])
         with col_btn2:
-            load_edges = st.button("🔄 Load Edges", type="primary", use_container_width=True)
+            load_edges = st.button("Load Edges", type="primary", use_container_width=True)
         with col_search2:
-            edge_filter = st.text_input("🔍 Filter by relation", placeholder="Type to filter...")
+            edge_filter = st.text_input("Filter by relation", placeholder="Type to filter...")
         
         if load_edges or 'cached_edges' in st.session_state:
             if load_edges:
@@ -1559,9 +1559,9 @@ elif page == "📊 Data Explorer":
                     if res.status_code == 200:
                         st.session_state['cached_edges'] = res.json()
                     else:
-                        st.error(f"❌ Error fetching edges: {res.text}")
+                        st.error(f"Error fetching edges: {res.text}")
                 except Exception as e:
-                    st.error(f"❌ Connection Error: {e}")
+                    st.error(f"Connection Error: {e}")
             
             if 'cached_edges' in st.session_state:
                 edges = st.session_state['cached_edges']
@@ -1570,7 +1570,7 @@ elif page == "📊 Data Explorer":
                 if edge_filter:
                     edges = [e for e in edges if edge_filter.lower() in str(e).lower()]
                 
-                st.success(f"✅ Showing {len(edges)} edges")
+                st.success(f"Showing {len(edges)} edges")
                 
                 if edges:
                     # Convert to dataframe for better display
@@ -1583,12 +1583,12 @@ elif page == "📊 Data Explorer":
                     )
                     
                     # Export option
-                    with st.expander("📥 Export Options"):
+                    with st.expander("Export Options"):
                         st.download_button(
-                            label="📥 Download as CSV",
+                            label="Download as CSV",
                             data=df.to_csv(index=False),
                             file_name="sagedb_edges.csv",
                             mime="text/csv"
                         )
                 else:
-                    st.info("📭 No edges match your filter.")
+                    st.info("No edges match your filter.")
