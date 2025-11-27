@@ -1,6 +1,7 @@
 import faiss
 import numpy as np
 import os
+import json
 import logging
 from typing import List, Tuple
 from config import (
@@ -55,11 +56,22 @@ class VectorIndex:
         if initial_id_map is not None:
             self.id_map = initial_id_map
 
+        id_map_path = self.index_path + ".idmap"
+
         if os.path.exists(self.index_path):
             logger.info(f"Loading FAISS index from {self.index_path}")
             try:
                 self.index = faiss.read_index(self.index_path)
                 self._configure_search_params()
+                
+                # Load id_map if exists
+                if os.path.exists(id_map_path):
+                    with open(id_map_path, 'r') as f:
+                        id_map_json = json.load(f)
+                        # Convert str keys back to int
+                        self.id_map = {int(k): v for k, v in id_map_json.items()}
+                    logger.info(f"Loaded id_map with {len(self.id_map)} mappings")
+                
                 logger.info(f"Loaded index with {self.index.ntotal} vectors")
             except Exception as e:
                 logger.error(f"Failed to load FAISS index: {e}")
@@ -194,9 +206,16 @@ class VectorIndex:
             pass  # Silently ignore for non-HNSW indices
 
     def save(self):
-        """Save index to disk."""
+        """Save index and id_map to disk."""
         faiss.write_index(self.index, self.index_path)
-        logger.info(f"Saved FAISS index to {self.index_path} ({self.index.ntotal} vectors)")
+        
+        # Save id_map as JSON (convert int keys to str for JSON compatibility)
+        id_map_path = self.index_path + ".idmap"
+        id_map_json = {str(k): v for k, v in self.id_map.items()}
+        with open(id_map_path, 'w') as f:
+            json.dump(id_map_json, f)
+        
+        logger.info(f"Saved FAISS index to {self.index_path} ({self.index.ntotal} vectors, {len(self.id_map)} mappings)")
 
     def get_vector_by_id(self, faiss_id: int) -> np.ndarray:
         """

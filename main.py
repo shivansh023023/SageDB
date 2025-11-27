@@ -61,6 +61,12 @@ async def startup_event():
         logger.warning("MISMATCH DETECTED: SQLite and FAISS counts do not match. Rebuilding FAISS index...")
         # Rebuild FAISS index from SQLite
         rebuild_faiss_from_sqlite()
+    else:
+        # Even if no rebuild, save indices to disk to ensure persistence
+        # This handles the case where reload=True skips shutdown events
+        vector_index.save()
+        graph_manager.save()
+        logger.info("Indices verified and persisted to disk.")
     
     logger.info("System Ready.")
 
@@ -141,6 +147,11 @@ def rebuild_faiss_from_sqlite():
             break
     
     logger.info(f"FAISS rebuild complete. Total vectors: {vector_index.ntotal}")
+    
+    # Save immediately after rebuild to persist to disk
+    vector_index.save()
+    graph_manager.save()
+    logger.info("Indices persisted to disk after rebuild.")
 
 
 app.include_router(router)

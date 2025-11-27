@@ -43,6 +43,7 @@ class EdgeCreate(BaseModel):
 class SearchQuery(BaseModel):
     text: str = Field(..., min_length=1, max_length=1000)
     top_k: int = Field(10, ge=1, le=100)
+    offset: int = Field(0, ge=0, le=1000, description="Number of results to skip for pagination")
     alpha: float = Field(0.7, ge=0.0, le=1.0)
     beta: float = Field(0.3, ge=0.0, le=1.0)
 
@@ -59,6 +60,7 @@ class ContextSearchQuery(BaseModel):
     """
     text: str = Field(..., min_length=1, max_length=1000)
     top_k: int = Field(10, ge=1, le=100)
+    offset: int = Field(0, ge=0, le=1000, description="Number of results to skip for pagination")
     context_before: int = Field(2, ge=0, le=5, description="Chunks to include before each result")
     context_after: int = Field(2, ge=0, le=5, description="Chunks to include after each result")
     alpha: float = Field(0.7, ge=0.0, le=1.0)
@@ -69,6 +71,7 @@ class VectorSearchQuery(BaseModel):
     """Vector-only search query."""
     text: str = Field(..., min_length=1, max_length=1000)
     top_k: int = Field(10, ge=1, le=100)
+    offset: int = Field(0, ge=0, le=1000, description="Number of results to skip for pagination")
 
 
 class NodeUpdate(BaseModel):
@@ -82,6 +85,20 @@ class NodeUpdate(BaseModel):
             v = v.strip()
             if not v:
                 raise ValueError('Text cannot be empty or whitespace only')
+        return v
+
+
+class EdgeUpdate(BaseModel):
+    """Update edge relation and/or weight."""
+    relation: Optional[str] = Field(None, min_length=1, max_length=100)
+    weight: Optional[float] = Field(None, gt=0.0, le=1.0)
+
+    @validator('relation')
+    def validate_relation(cls, v):
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError('Relation cannot be empty or whitespace only')
         return v
 
 

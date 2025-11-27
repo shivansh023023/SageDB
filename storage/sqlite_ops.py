@@ -292,6 +292,40 @@ class SQLiteManager:
         finally:
             conn.close()
 
+    def update_edge(self, edge_id: int, relation: Optional[str] = None, weight: Optional[float] = None) -> Optional[Dict]:
+        """Update edge relation and/or weight. Returns updated edge if found, None otherwise."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Check if edge exists
+            cursor.execute("SELECT id FROM edges WHERE id = ?", (edge_id,))
+            if not cursor.fetchone():
+                return None
+            
+            if relation is not None and weight is not None:
+                cursor.execute("UPDATE edges SET relation = ?, weight = ? WHERE id = ?", 
+                              (relation, weight, edge_id))
+            elif relation is not None:
+                cursor.execute("UPDATE edges SET relation = ? WHERE id = ?", (relation, edge_id))
+            elif weight is not None:
+                cursor.execute("UPDATE edges SET weight = ? WHERE id = ?", (weight, edge_id))
+            
+            conn.commit()
+            
+            # Return updated edge
+            return self.get_edge(edge_id)
+        except sqlite3.IntegrityError as e:
+            conn.rollback()
+            if "UNIQUE constraint" in str(e):
+                raise ValueError(f"Edge with this relation already exists between these nodes")
+            raise e
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to update edge in SQLite: {e}")
+            raise e
+        finally:
+            conn.close()
+
     def update_node(self, uuid: str, text: Optional[str] = None, metadata: Optional[Dict] = None) -> bool:
         """Update node text and/or metadata. Returns True if updated, False if not found."""
         conn = self._get_conn()

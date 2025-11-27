@@ -5,7 +5,7 @@ import logging
 import os
 
 from models.api_schemas import (
-    NodeCreate, NodeResponse, NodeUpdate, EdgeCreate, EdgeResponse,
+    NodeCreate, NodeResponse, NodeUpdate, EdgeCreate, EdgeUpdate, EdgeResponse,
     SearchQuery, VectorSearchQuery, SearchResponse, BenchmarkRequest,
     ContextSearchQuery, ContextSearchResult, ContextSearchResponse
 )
@@ -154,6 +154,45 @@ def get_edge(edge_id: int):
         raise HTTPException(status_code=404, detail="Edge not found")
     return EdgeResponse(**edge_data)
 
+@router.put("/v1/edges/{edge_id}", response_model=EdgeResponse)
+@write_locked
+def update_edge(edge_id: int, update: EdgeUpdate):
+    """Update edge relation and/or weight."""
+    try:
+        if update.relation is None and update.weight is None:
+            raise HTTPException(status_code=400, detail="At least one field (relation or weight) must be provided")
+        
+        # Get old edge data for NetworkX update
+        old_edge = sqlite_manager.get_edge(edge_id)
+        if not old_edge:
+            raise HTTPException(status_code=404, detail="Edge not found")
+        
+        # Update in SQLite
+        updated_edge = sqlite_manager.update_edge(edge_id, update.relation, update.weight)
+        if not updated_edge:
+            raise HTTPException(status_code=404, detail="Edge not found")
+        
+        # Update in NetworkX - remove old edge and add new one with updated attributes
+        try:
+            graph_manager.remove_edge(old_edge['source_id'], old_edge['target_id'])
+            graph_manager.add_edge(
+                updated_edge['source_id'],
+                updated_edge['target_id'],
+                updated_edge['relation'],
+                updated_edge['weight']
+            )
+        except Exception as e:
+            logger.warning(f"NetworkX edge update failed (continuing): {e}")
+        
+        return EdgeResponse(**updated_edge)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating edge: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.delete("/v1/edges/{edge_id}")
 @write_locked
 def delete_edge(edge_id: int):
@@ -185,13 +224,14 @@ def delete_edge(edge_id: int):
 @router.post("/v1/search/vector", response_model=SearchResponse)
 @read_locked
 def vector_search(query: VectorSearchQuery):
-    """Vector-only search using cosine similarity."""
+    """Vector-only search using cosine similarity with offset pagination."""
     try:
         # Encode query
         query_vector = embedding_service.encode(query.text)
         
-        # FAISS Search
-        uuids, scores = vector_index.search(query_vector, k=query.top_k)
+        # FAISS Search - fetch extra to account for offset
+        fetch_k = query.top_k + query.offset
+        uuids, scores = vector_index.search(query_vector, k=fetch_k)
         
         if not uuids:
             return SearchResponse(results=[], count=0)
@@ -201,13 +241,18 @@ def vector_search(query: VectorSearchQuery):
         if not filtered_pairs:
             return SearchResponse(results=[], count=0)
         
-        filtered_uuids = [u for u, s in filtered_pairs]
+        # Apply offset pagination
+        paginated_pairs = filtered_pairs[query.offset:query.offset + query.top_k]
+        if not paginated_pairs:
+            return SearchResponse(results=[], count=0)
+        
+        filtered_uuids = [u for u, s in paginated_pairs]
         
         # Batch hydrate with metadata (eliminates N+1 problem)
         node_data_map = sqlite_manager.get_nodes_batch(filtered_uuids)
         
         results = []
-        for uuid_str, score in filtered_pairs:
+        for uuid_str, score in paginated_pairs:
             node_data = node_data_map.get(uuid_str)
             if node_data:
                 results.append({
@@ -228,6 +273,10 @@ def vector_search(query: VectorSearchQuery):
 @router.post("/v1/search/hybrid", response_model=SearchResponse)
 @read_locked
 def hybrid_search(query: SearchQuery):
+    import time as _time
+    timings = {}
+    _t0 = _time.time()
+    
     try:
         # Normalize alpha/beta if they don't sum to 1.0
         total = query.alpha + query.beta
@@ -238,12 +287,15 @@ def hybrid_search(query: SearchQuery):
             alpha, beta = 0.5, 0.5
         
         # 1. Encode query
+        _t1 = _time.time()
         query_vector = embedding_service.encode(query.text)
+        timings['1_encode'] = (_time.time() - _t1) * 1000
         
         # 2. FAISS Search (Initial Seeds)
-        # Get top-50 as seeds for graph expansion
+        _t2 = _time.time()
         initial_k = min(50, query.top_k * 5)
         seed_uuids, seed_scores = vector_index.search(query_vector, k=initial_k)
+        timings['2_faiss'] = (_time.time() - _t2) * 1000
         
         if not seed_uuids:
             return SearchResponse(results=[], count=0)
@@ -251,23 +303,26 @@ def hybrid_search(query: SearchQuery):
         # Build seed score map for weighted graph scoring
         seed_score_map = {uuid: score for uuid, score in zip(seed_uuids, seed_scores)}
         
-        # 3. Graph Expansion - Discover related nodes
-        # Expand to depth=2 to find nodes not in initial vector results
+        # 3. Graph Expansion
+        _t3 = _time.time()
         expansion_depth = 2
         expanded_candidates = graph_manager.expand_from_seeds(seed_uuids[:20], depth=expansion_depth)
+        timings['3_expand'] = (_time.time() - _t3) * 1000
         
         logger.info(f"Expanded from {len(seed_uuids)} seeds to {len(expanded_candidates)} candidates")
         
-        # 4. Compute vector scores for ALL expanded candidates
-        # For nodes already in seed results, use cached scores
-        # For discovered nodes, compute on-the-fly
+        # 4. Compute vector scores for expanded candidates
+        _t4 = _time.time()
         new_nodes = [n for n in expanded_candidates if n not in seed_score_map]
         if new_nodes:
             new_scores = vector_index.batch_compute_similarity(query_vector, new_nodes)
             seed_score_map.update(new_scores)
+        timings['4_batch_vec'] = (_time.time() - _t4) * 1000
         
-        # 5. Batch Hydrate all candidates with metadata (eliminates N+1 problem)
+        # 5. Batch Hydrate all candidates with metadata
+        _t5 = _time.time()
         node_data_map = sqlite_manager.get_nodes_batch(list(expanded_candidates))
+        timings['5_hydrate'] = (_time.time() - _t5) * 1000
         
         all_candidates = []
         for uuid_str in expanded_candidates:
@@ -281,7 +336,7 @@ def hybrid_search(query: SearchQuery):
                 })
         
         # 6. Calculate Graph Scores (with relationship awareness)
-        # Use top-10 seeds for connectivity calculation
+        _t6 = _time.time()
         top_seeds = seed_uuids[:10]
         graph_scores = {}
         
@@ -293,14 +348,17 @@ def hybrid_search(query: SearchQuery):
                 seed_vector_scores=seed_score_map
             )
             graph_scores[uuid_str] = graph_breakdown['combined']
+        timings['6_graph_score'] = (_time.time() - _t6) * 1000
             
         # 7. Fusion (using normalized alpha/beta)
+        _t7 = _time.time()
         fused_results = hybrid_fusion(
             all_candidates, 
             graph_scores, 
             alpha=alpha, 
             beta=beta
         )
+        timings['7_fusion'] = (_time.time() - _t7) * 1000
         
         # 8. Filter out low relevance results
         filtered_results = [
@@ -308,8 +366,11 @@ def hybrid_search(query: SearchQuery):
             if r.get('score', 0) >= MINIMUM_RELEVANCE_THRESHOLD
         ]
         
-        # 9. Top K
-        final_results = filtered_results[:query.top_k]
+        # 9. Apply offset pagination and Top K
+        final_results = filtered_results[query.offset:query.offset + query.top_k]
+        
+        timings['total'] = (_time.time() - _t0) * 1000
+        logger.info(f"SEARCH TIMINGS: {timings}")
         
         return SearchResponse(results=final_results, count=len(final_results))
         
@@ -397,8 +458,8 @@ def context_aware_search(query: ContextSearchQuery):
             if r.get('score', 0) >= MINIMUM_RELEVANCE_THRESHOLD
         ]
         
-        # 9. Take top K
-        top_results = filtered_results[:query.top_k]
+        # 9. Apply offset pagination and take top K
+        top_results = filtered_results[query.offset:query.offset + query.top_k]
         
         # 10. CONTEXT EXPANSION - The key feature!
         # For each result, get surrounding chunks via graph traversal
@@ -511,8 +572,8 @@ def hybrid_search_legacy(query: SearchQuery):
             beta=query.beta
         )
         
-        # 7. Top K
-        final_results = fused_results[:query.top_k]
+        # 7. Apply offset pagination and Top K
+        final_results = fused_results[query.offset:query.offset + query.top_k]
         
         return SearchResponse(results=final_results, count=len(final_results))
         

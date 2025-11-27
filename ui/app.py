@@ -7,6 +7,13 @@ import matplotlib.pyplot as plt
 # Configuration
 API_URL = "http://localhost:8000"
 
+# Create a session for connection pooling (faster repeated requests)
+@st.cache_resource
+def get_session():
+    return requests.Session()
+
+session = get_session()
+
 st.set_page_config(
     page_title="SageDB UI", 
     page_icon="🧠",
@@ -919,7 +926,7 @@ elif page == "⚙️ Manage Data":
         
         col1, col2 = st.columns([2, 1])
         with col1:
-            edge_id = st.number_input("🔍 Edge ID", min_value=1, step=1, key="delete_edge_id")
+            edge_id = st.number_input("🔍 Edge ID", min_value=1, step=1, key="manage_edge_id")
         with col2:
             st.write("")  # Spacer
             st.write("")  # Spacer
@@ -940,18 +947,62 @@ elif page == "⚙️ Manage Data":
         
         st.divider()
         
-        confirm_edge = st.checkbox("I want to delete this edge", key="confirm_edge_delete")
-        if st.button("🗑️ Delete Edge", type="primary", disabled=not confirm_edge):
-            try:
-                res = requests.delete(f"{API_URL}/v1/edges/{int(edge_id)}")
-                if res.status_code == 200:
-                    st.success("✅ Edge deleted!")
-                    if 'found_edge' in st.session_state:
-                        del st.session_state['found_edge']
-                else:
-                    st.error(f"Error: {res.text}")
-            except Exception as e:
-                st.error(f"Connection Error: {e}")
+        col_update, col_delete = st.columns(2)
+        
+        with col_update:
+            st.markdown("##### ✏️ Update Edge")
+            new_relation = st.text_input(
+                "New Relation",
+                key="update_edge_relation",
+                placeholder="Leave empty to keep current"
+            )
+            new_weight = st.number_input(
+                "New Weight",
+                min_value=0.01,
+                max_value=1.0,
+                value=None,
+                step=0.05,
+                key="update_edge_weight",
+                help="Leave at 0.01 or change to desired value (0.01-1.0)"
+            )
+            
+            if st.button("💾 Update Edge", use_container_width=True):
+                try:
+                    payload = {}
+                    if new_relation.strip():
+                        payload["relation"] = new_relation.strip()
+                    if new_weight and new_weight > 0.01:
+                        payload["weight"] = new_weight
+                    
+                    if not payload:
+                        st.warning("Nothing to update")
+                    else:
+                        res = requests.put(f"{API_URL}/v1/edges/{int(edge_id)}", json=payload)
+                        if res.status_code == 200:
+                            st.success("✅ Edge updated!")
+                            st.session_state['found_edge'] = res.json()
+                            st.rerun()
+                        else:
+                            st.error(f"Error: {res.text}")
+                except Exception as e:
+                    st.error(f"Connection Error: {e}")
+        
+        with col_delete:
+            st.markdown("##### 🗑️ Delete Edge")
+            st.error("⚠️ **Danger Zone**\n\nThis will permanently delete the edge!")
+            
+            confirm_edge = st.checkbox("I want to delete this edge", key="confirm_edge_delete")
+            if st.button("🗑️ Delete Edge", type="primary", disabled=not confirm_edge, use_container_width=True):
+                try:
+                    res = requests.delete(f"{API_URL}/v1/edges/{int(edge_id)}")
+                    if res.status_code == 200:
+                        st.success("✅ Edge deleted!")
+                        if 'found_edge' in st.session_state:
+                            del st.session_state['found_edge']
+                    else:
+                        st.error(f"Error: {res.text}")
+                except Exception as e:
+                    st.error(f"Connection Error: {e}")
 
 # --- Page: Search ---
 elif page == "🔍 Search":
@@ -972,21 +1023,31 @@ elif page == "🔍 Search":
         with st.expander("⚙️ Search Settings", expanded=(search_type == "Hybrid")):
             if search_type == "Hybrid":
                 st.caption("Hybrid Score = (Alpha × Vector) + (Beta × Graph)")
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     alpha = st.slider("Vector Weight (α)", 0.0, 1.0, 0.7)
                 with col2:
                     beta = st.slider("Graph Weight (β)", 0.0, 1.0, 0.3)
                 with col3:
                     top_k = st.number_input("Results", min_value=1, max_value=50, value=5)
+                with col4:
+                    offset = st.number_input("Offset", min_value=0, max_value=100, value=0, help="Skip this many results (pagination)")
             elif search_type == "Vector Only":
                 st.caption("Pure semantic similarity using embeddings")
                 alpha, beta = 1.0, 0.0
-                top_k = st.number_input("Results", min_value=1, max_value=50, value=5)
+                col1, col2 = st.columns(2)
+                with col1:
+                    top_k = st.number_input("Results", min_value=1, max_value=50, value=5)
+                with col2:
+                    offset = st.number_input("Offset", min_value=0, max_value=100, value=0, help="Skip this many results (pagination)")
             else:  # Graph Only
                 st.caption("Graph-based search using connectivity")
                 alpha, beta = 0.0, 1.0
-                top_k = st.number_input("Results", min_value=1, max_value=50, value=5)
+                col1, col2 = st.columns(2)
+                with col1:
+                    top_k = st.number_input("Results", min_value=1, max_value=50, value=5)
+                with col2:
+                    offset = st.number_input("Offset", min_value=0, max_value=100, value=0, help="Skip this many results (pagination)")
             
         search_btn = st.form_submit_button("🔍 Search", type="primary", use_container_width=True)
         
@@ -994,11 +1055,11 @@ elif page == "🔍 Search":
         try:
             with st.spinner("Searching..."):
                 if search_type == "Vector Only":
-                    payload = {"text": query, "top_k": top_k}
-                    res = requests.post(f"{API_URL}/v1/search/vector", json=payload)
+                    payload = {"text": query, "top_k": int(top_k), "offset": int(offset)}
+                    res = session.post(f"{API_URL}/v1/search/vector", json=payload, timeout=30)
                 else:
-                    payload = {"text": query, "alpha": alpha, "beta": beta, "top_k": top_k}
-                    res = requests.post(f"{API_URL}/v1/search/hybrid", json=payload)
+                    payload = {"text": query, "alpha": float(alpha), "beta": float(beta), "top_k": int(top_k), "offset": int(offset)}
+                    res = session.post(f"{API_URL}/v1/search/hybrid", json=payload, timeout=30)
             
             if res.status_code == 200:
                 results = res.json()['results']

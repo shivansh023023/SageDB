@@ -19,11 +19,30 @@ class EmbeddingService:
         return cls._instance
 
     def warmup(self):
-        """Warmup the model to prevent cold start latency."""
+        """
+        Warmup the model to prevent cold start latency.
+        
+        Uses diverse, realistic sentences of varying lengths to fully prime
+        the model's inference paths and avoid first-query penalties.
+        """
         logger.info("Warming up embedding model...")
-        dummy_sentences = ["Hello world", "Graph database", "Vector search"]
-        self._model.encode(dummy_sentences)
-        logger.info("Embedding model warmup complete.")
+        # Diverse warmup sentences that simulate real queries
+        warmup_sentences = [
+            # Short phrases
+            "Hello world",
+            "Graph database",
+            "Vector search",
+            # Medium length (typical queries)
+            "How does semantic search work in vector databases?",
+            "What is the relationship between nodes in a knowledge graph?",
+            "Explain the concept of embedding similarity for document retrieval",
+            # Longer sentences (edge cases)
+            "The hierarchical navigable small world algorithm provides logarithmic search complexity for approximate nearest neighbor queries in high-dimensional vector spaces",
+            "Knowledge graphs combine structured relationships with unstructured text embeddings to enable hybrid search that leverages both semantic similarity and graph topology",
+        ]
+        # Encode all warmup sentences to prime model
+        self._model.encode(warmup_sentences)
+        logger.info(f"Embedding model warmup complete ({len(warmup_sentences)} sentences).")
 
     @lru_cache(maxsize=1024)
     def _encode_cached(self, text: str) -> tuple:
