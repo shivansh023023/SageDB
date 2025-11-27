@@ -196,14 +196,19 @@ def vector_search(query: VectorSearchQuery):
         if not uuids:
             return SearchResponse(results=[], count=0)
         
-        # Hydrate with metadata and apply relevance filtering
+        # Filter by relevance threshold first
+        filtered_pairs = [(u, s) for u, s in zip(uuids, scores) if s >= MINIMUM_RELEVANCE_THRESHOLD]
+        if not filtered_pairs:
+            return SearchResponse(results=[], count=0)
+        
+        filtered_uuids = [u for u, s in filtered_pairs]
+        
+        # Batch hydrate with metadata (eliminates N+1 problem)
+        node_data_map = sqlite_manager.get_nodes_batch(filtered_uuids)
+        
         results = []
-        for uuid_str, score in zip(uuids, scores):
-            # Filter out low relevance results
-            if score < MINIMUM_RELEVANCE_THRESHOLD:
-                continue
-                
-            node_data = sqlite_manager.get_node(uuid_str)
+        for uuid_str, score in filtered_pairs:
+            node_data = node_data_map.get(uuid_str)
             if node_data:
                 results.append({
                     "uuid": uuid_str,
@@ -261,10 +266,12 @@ def hybrid_search(query: SearchQuery):
             new_scores = vector_index.batch_compute_similarity(query_vector, new_nodes)
             seed_score_map.update(new_scores)
         
-        # 5. Hydrate all candidates with metadata
+        # 5. Batch Hydrate all candidates with metadata (eliminates N+1 problem)
+        node_data_map = sqlite_manager.get_nodes_batch(list(expanded_candidates))
+        
         all_candidates = []
         for uuid_str in expanded_candidates:
-            node_data = sqlite_manager.get_node(uuid_str)
+            node_data = node_data_map.get(uuid_str)
             if node_data:
                 all_candidates.append({
                     "id": uuid_str,
@@ -395,18 +402,31 @@ def context_aware_search(query: ContextSearchQuery):
         
         # 10. CONTEXT EXPANSION - The key feature!
         # For each result, get surrounding chunks via graph traversal
-        context_results = []
-        seen_uuids = set()  # Avoid duplicating chunks across results
+        
+        # First, collect all context UUIDs we'll need
+        all_context_uuids = set()
+        result_context_windows = {}
         
         for result in top_results:
             uuid_str = result['uuid']
-            
-            # Get context window
             context_window = graph_manager.get_full_context_window(
                 uuid_str,
                 before=query.context_before,
                 after=query.context_after
             )
+            result_context_windows[uuid_str] = context_window
+            all_context_uuids.update(context_window)
+        
+        # Batch fetch all context nodes
+        context_node_map = sqlite_manager.get_nodes_batch(list(all_context_uuids))
+        
+        # Now build results with context
+        context_results = []
+        seen_uuids = set()  # Avoid duplicating chunks across results
+        
+        for result in top_results:
+            uuid_str = result['uuid']
+            context_window = result_context_windows[uuid_str]
             
             # Build combined context text
             context_texts = []
@@ -414,7 +434,7 @@ def context_aware_search(query: ContextSearchQuery):
             
             for ctx_uuid in context_window:
                 if ctx_uuid not in seen_uuids:
-                    ctx_node = sqlite_manager.get_node(ctx_uuid)
+                    ctx_node = context_node_map.get(ctx_uuid)
                     if ctx_node:
                         context_texts.append(ctx_node['text'])
                         context_uuids.append(ctx_uuid)
@@ -462,10 +482,12 @@ def hybrid_search_legacy(query: SearchQuery):
         # 3. Extract Seed Set (Top 10 from vector search)
         seed_set = candidate_uuids[:10]
         
-        # 4. Hydrate candidates with metadata for fusion
+        # 4. Batch hydrate candidates with metadata (eliminates N+1)
+        node_data_map = sqlite_manager.get_nodes_batch(candidate_uuids)
+        
         vector_results = []
         for uuid_str, score in zip(candidate_uuids, candidate_scores):
-            node_data = sqlite_manager.get_node(uuid_str)
+            node_data = node_data_map.get(uuid_str)
             if node_data:
                 vector_results.append({
                     "id": uuid_str,

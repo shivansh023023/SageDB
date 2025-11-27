@@ -175,6 +175,44 @@ class SQLiteManager:
             }
         return None
 
+    def get_nodes_batch(self, uuids: List[str]) -> Dict[str, Dict]:
+        """
+        Batch fetch multiple nodes in a single query.
+        
+        This eliminates the N+1 query problem where fetching N nodes
+        requires N separate database round-trips.
+        
+        Args:
+            uuids: List of node UUIDs to fetch
+            
+        Returns:
+            Dict mapping UUID -> node data
+        """
+        if not uuids:
+            return {}
+        
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        
+        # Use parameterized IN clause for safety
+        placeholders = ','.join(['?'] * len(uuids))
+        query = f"SELECT uuid, faiss_id, text, type, metadata FROM nodes WHERE uuid IN ({placeholders})"
+        
+        cursor.execute(query, uuids)
+        rows = cursor.fetchall()
+        conn.close()
+        
+        results = {}
+        for row in rows:
+            results[row[0]] = {
+                "uuid": row[0],
+                "faiss_id": row[1],
+                "text": row[2],
+                "type": row[3],
+                "metadata": json.loads(row[4]) if row[4] else {}
+            }
+        return results
+
     def delete_node(self, uuid: str) -> Optional[int]:
         """Deletes node and returns its faiss_id if it existed."""
         conn = self._get_conn()
