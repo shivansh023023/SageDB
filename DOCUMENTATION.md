@@ -356,6 +356,42 @@ We have successfully built a working prototype that meets the core requirements 
 | `/v1/benchmark`            | POST   | Calculate Precision/Recall/NDCG metrics          | ✅     |
 | `/v1/admin/snapshot`       | POST   | Persist FAISS and Graph to disk                  | ✅     |
 | `/health`                  | GET    | System health check                              | ✅     |
+| `/v1/ingest/file`          | POST   | **Ingest single file** (md, txt, html, json, xml) | ✅     |
+| `/v1/ingest/batch`         | POST   | **Batch ingest multiple files**                  | ✅     |
+| `/v1/ingest/text`          | POST   | **Ingest raw text** directly                     | ✅     |
+| `/v1/ingest/supported-types` | GET  | Get supported file types and limits              | ✅     |
+
+#### Ingestion Pipeline (NEW)
+
+The ingestion pipeline is the **critical entry point** for getting data into SageDB. It handles the complete flow from raw files to searchable graph nodes:
+
+```
+File/Text → Parser → Chunker → Embedder → Storage → Relationships
+```
+
+**Supported Formats:**
+- **Markdown** (`.md`, `.markdown`): Uses `markdown-it-py` for AST parsing, preserves headers as hierarchy
+- **HTML** (`.html`, `.htm`): Uses BeautifulSoup4, extracts semantic tags (article, section, p)
+- **Plain Text** (`.txt`): Uses NLTK for sentence boundary detection, splits by paragraphs
+- **JSON** (`.json`): Recursively extracts text from content/description fields
+- **XML** (`.xml`): Parses text content from elements
+
+**Key Features:**
+- **Semantic Chunking**: Respects sentence boundaries, configurable token limits and overlap
+- **Only Content-Bearing Nodes**: No empty header nodes - sections must have actual content
+- **Hierarchy Preservation**: Document structure stored as metadata, creates `section_of` edges
+- **Sequential Relationships**: `next_chunk` edges with weight 1.0 (highest) connect consecutive chunks
+- **Deduplication**: SHA-256 content hash prevents duplicate ingestion
+- **File Size Limit**: 10MB default to prevent memory issues
+- **Relevance Filtering**: Search results below 0.25 similarity are filtered out
+
+**Edge Weight System:**
+| Edge Type     | Weight | Purpose                                |
+| ------------- | ------ | -------------------------------------- |
+| `chunk_of`    | 1.0    | Chunk belongs to document (strongest) |
+| `section_of`  | 0.98   | Hierarchical section relationship     |
+| `follows`     | 0.95   | Sequential document order             |
+| `next_chunk`  | 0.85   | Consecutive chunks in same section    |
 
 #### Storage Engines
 
@@ -376,7 +412,9 @@ We have successfully built a working prototype that meets the core requirements 
 #### User Interface (Streamlit)
 
 - ✅ **System Health**: Backend status and data counts
+- ✅ **Ingest Files**: File upload UI for single/batch ingestion and raw text input
 - ✅ **Add Data**: Forms to create nodes and edges manually
+- ✅ **Manage Data**: Update and delete nodes/edges
 - ✅ **Search**: Interactive search with Alpha/Beta sliders and detailed scoring breakdowns
 - ✅ **Graph View**: Matplotlib-based subgraph visualization
 - ✅ **Data Explorer**: Tabular view of all nodes and edges
