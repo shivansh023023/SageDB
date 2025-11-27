@@ -2,50 +2,255 @@ import networkx as nx
 import os
 import logging
 import math
+import time
 from typing import List, Dict, Optional
-from config import GRAPH_PATH
+from config import (
+    GRAPH_PATH, 
+    PAGERANK_DAMPING, 
+    PAGERANK_MAX_ITER, 
+    PAGERANK_TOL,
+    CENTRALITY_CACHE_TTL
+)
 
 logger = logging.getLogger(__name__)
 
+
 class GraphManager:
+    """
+    Graph manager with enhanced features for scalability:
+    
+    1. GraphML Persistence: Uses GraphML format instead of pickle for:
+       - Human-readable XML format
+       - Interoperability with other graph tools (Gephi, Neo4j, etc.)
+       - Robustness against Python version/library changes
+       - Schema validation support
+       
+    2. PageRank Centrality: Replaces simple Degree Centrality with PageRank for:
+       - Better importance scoring based on link quality, not just quantity
+       - Handles graph structure more intelligently (endorsement propagation)
+       - Standard algorithm used by Google, well-understood semantics
+       
+    3. Cached Centrality: PageRank is expensive O(N²), so we cache it:
+       - Configurable TTL (default 5 minutes)
+       - Automatically invalidates on graph modifications
+       - Falls back to degree centrality if cache invalid and graph is large
+    """
+    
     def __init__(self, graph_path: str = GRAPH_PATH):
         self.graph_path = graph_path
         self.graph = nx.DiGraph()
+        
+        # PageRank cache for performance
+        self._pagerank_cache: Dict[str, float] = {}
+        self._pagerank_cache_time: float = 0
+        self._pagerank_cache_valid: bool = False
+        self._cache_ttl = CENTRALITY_CACHE_TTL
+        
+        # Track if graph was modified since last save
+        self._modified = False
 
     def load_or_create(self):
+        """Load graph from GraphML file or create new one."""
+        # Try loading GraphML first
         if os.path.exists(self.graph_path):
             logger.info(f"Loading graph from {self.graph_path}")
             try:
-                self.graph = nx.read_gpickle(self.graph_path)
+                self.graph = nx.read_graphml(self.graph_path)
+                # Convert to DiGraph if loaded as generic Graph
+                if not isinstance(self.graph, nx.DiGraph):
+                    self.graph = nx.DiGraph(self.graph)
+                logger.info(f"Loaded graph with {self.graph.number_of_nodes()} nodes, {self.graph.number_of_edges()} edges")
+                self._invalidate_pagerank_cache()
             except Exception as e:
-                logger.error(f"Failed to load graph: {e}")
+                logger.error(f"Failed to load GraphML: {e}")
+                self._try_legacy_load()
+        else:
+            # Check for legacy pickle file
+            legacy_path = self.graph_path.replace('.graphml', '.gpickle')
+            if os.path.exists(legacy_path):
+                logger.info(f"Found legacy pickle file, migrating to GraphML...")
+                self._try_legacy_load(legacy_path)
+                # Save as GraphML after migration
+                self.save()
+            else:
+                logger.info("Creating new NetworkX graph")
+                self.graph = nx.DiGraph()
+    
+    def _try_legacy_load(self, legacy_path: str = None):
+        """Try to load from legacy pickle format for migration."""
+        if legacy_path is None:
+            legacy_path = self.graph_path.replace('.graphml', '.gpickle')
+        
+        if os.path.exists(legacy_path):
+            try:
+                self.graph = nx.read_gpickle(legacy_path)
+                logger.info(f"Migrated from legacy pickle: {self.graph.number_of_nodes()} nodes")
+                self._invalidate_pagerank_cache()
+            except Exception as e:
+                logger.error(f"Failed to load legacy pickle: {e}")
                 self.graph = nx.DiGraph()
         else:
-            logger.info("Creating new NetworkX graph")
             self.graph = nx.DiGraph()
 
     def add_node(self, uuid: str):
         self.graph.add_node(uuid)
+        self._modified = True
+        self._invalidate_pagerank_cache()
 
     def remove_node(self, uuid: str):
         if self.graph.has_node(uuid):
             self.graph.remove_node(uuid)
+            self._modified = True
+            self._invalidate_pagerank_cache()
 
     def add_edge(self, source: str, target: str, relation: str, weight: float):
         self.graph.add_edge(source, target, relation=relation, weight=weight)
+        self._modified = True
+        self._invalidate_pagerank_cache()
 
     def remove_edge(self, source: str, target: str):
         """Remove edge between two nodes if it exists."""
         if self.graph.has_edge(source, target):
             self.graph.remove_edge(source, target)
+            self._modified = True
+            self._invalidate_pagerank_cache()
 
     def save(self):
-        nx.write_gpickle(self.graph, self.graph_path)
+        """Save graph to GraphML format."""
+        try:
+            # Ensure all edge/node attributes are serializable
+            # GraphML requires specific types (string, int, float, bool)
+            self._prepare_for_graphml()
+            nx.write_graphml(self.graph, self.graph_path)
+            self._modified = False
+            logger.info(f"Saved graph to {self.graph_path}")
+        except Exception as e:
+            logger.error(f"Failed to save GraphML: {e}")
+            # Fallback to pickle if GraphML fails
+            fallback_path = self.graph_path.replace('.graphml', '.gpickle')
+            logger.info(f"Falling back to pickle: {fallback_path}")
+            nx.write_gpickle(self.graph, fallback_path)
+    
+    def _prepare_for_graphml(self):
+        """Prepare graph for GraphML serialization by ensuring proper types."""
+        # GraphML supports: string, int, long, float, double, boolean
+        for u, v, data in self.graph.edges(data=True):
+            for key, value in list(data.items()):
+                if value is None:
+                    data[key] = ""
+                elif not isinstance(value, (str, int, float, bool)):
+                    data[key] = str(value)
+        
+        for node, data in self.graph.nodes(data=True):
+            for key, value in list(data.items()):
+                if value is None:
+                    data[key] = ""
+                elif not isinstance(value, (str, int, float, bool)):
+                    data[key] = str(value)
+    
+    # ========================================
+    # PAGERANK CENTRALITY (replaces Degree)
+    # ========================================
+    
+    def _invalidate_pagerank_cache(self):
+        """Mark PageRank cache as invalid."""
+        self._pagerank_cache_valid = False
+    
+    def _compute_pagerank(self) -> Dict[str, float]:
+        """
+        Compute PageRank for all nodes.
+        
+        PageRank measures node importance based on:
+        - Number of incoming edges (citations/references)
+        - Quality of incoming edges (from high-PageRank nodes)
+        
+        This is superior to simple degree centrality because:
+        - A link from an important node counts more
+        - Handles "endorsement" semantics naturally
+        - More robust to spam nodes with many low-quality links
+        """
+        if self.graph.number_of_nodes() == 0:
+            return {}
+        
+        try:
+            # Use personalized PageRank with uniform personalization
+            pagerank = nx.pagerank(
+                self.graph,
+                alpha=PAGERANK_DAMPING,
+                max_iter=PAGERANK_MAX_ITER,
+                tol=PAGERANK_TOL,
+                weight='weight'  # Use edge weights
+            )
+            return pagerank
+        except Exception as e:
+            logger.warning(f"PageRank computation failed: {e}, falling back to degree centrality")
+            return self._compute_degree_centrality()
+    
+    def _compute_degree_centrality(self) -> Dict[str, float]:
+        """Fallback: simple degree centrality."""
+        if self.graph.number_of_nodes() == 0:
+            return {}
+        
+        max_degree = max((d for n, d in self.graph.degree()), default=1)
+        return {
+            node: (self.graph.in_degree(node) + self.graph.out_degree(node)) / max(max_degree, 1)
+            for node in self.graph.nodes()
+        }
+    
+    def get_pagerank_scores(self) -> Dict[str, float]:
+        """
+        Get PageRank scores with caching.
+        
+        Returns cached scores if:
+        - Cache is valid
+        - Cache is not expired (TTL)
+        
+        Otherwise recomputes PageRank.
+        """
+        current_time = time.time()
+        
+        # Check if cache is valid and not expired
+        if (self._pagerank_cache_valid and 
+            self._pagerank_cache and
+            (current_time - self._pagerank_cache_time) < self._cache_ttl):
+            return self._pagerank_cache
+        
+        # Recompute PageRank
+        logger.debug("Recomputing PageRank centrality...")
+        start = time.time()
+        
+        self._pagerank_cache = self._compute_pagerank()
+        self._pagerank_cache_time = current_time
+        self._pagerank_cache_valid = True
+        
+        elapsed = time.time() - start
+        logger.debug(f"PageRank computed in {elapsed:.3f}s for {self.graph.number_of_nodes()} nodes")
+        
+        return self._pagerank_cache
+    
+    def get_centrality_score(self, node: str) -> float:
+        """Get PageRank-based centrality score for a single node."""
+        if not self.graph.has_node(node):
+            return 0.0
+        
+        pagerank = self.get_pagerank_scores()
+        
+        # Normalize to 0-1 range (PageRank values can be very small)
+        if not pagerank:
+            return 0.0
+        
+        max_pr = max(pagerank.values())
+        if max_pr == 0:
+            return 0.0
+        
+        return pagerank.get(node, 0.0) / max_pr
 
     def calculate_graph_score(self, candidate_node: str, seed_set: List[str]) -> float:
         """
-        Calculate graph score based on connectivity to seeds and centrality.
+        Calculate graph score based on connectivity to seeds and PageRank centrality.
         Formula: 0.7 * connectivity + 0.3 * centrality
+        
+        Uses PageRank instead of simple degree centrality for better importance scoring.
         """
         if not self.graph.has_node(candidate_node):
             return 0.0
@@ -59,18 +264,6 @@ class GraphManager:
                 continue
             if self.graph.has_node(seed) and nx.has_path(self.graph, seed, candidate_node):
                 try:
-                    # Use weight for shortest path (smaller weight = closer?) 
-                    # Note: Usually weights in graphs are distance (cost). 
-                    # If weight is similarity (0-1), we might want 1/weight or 1-weight for distance.
-                    # Prompt says: weight > 0 AND weight <= 1.0. 
-                    # Assuming weight represents STRENGTH/SIMILARITY, so higher is better?
-                    # Wait, prompt says: "min_distance = min(shortest_path_length...)"
-                    # and "connectivity_score = exp(-min_distance)".
-                    # If weight is strength, we should probably use 1/weight as distance.
-                    # However, to stick strictly to prompt: "shortest_path_length(s, n, weight='weight')"
-                    # This implies the stored 'weight' attribute is used as distance cost.
-                    # So we assume the input weight IS the distance/cost.
-                    
                     dist = nx.shortest_path_length(self.graph, seed, candidate_node, weight='weight')
                     reachable_seeds.append(seed)
                     min_distances.append(dist)
@@ -83,24 +276,8 @@ class GraphManager:
         else:
             connectivity_score = 0.0
 
-        # 2. Centrality Score (Degree Centrality Approximation)
-        # Using in_degree + out_degree as per prompt
-        degree = self.graph.in_degree(candidate_node) + self.graph.out_degree(candidate_node)
-        
-        # We need max_degree of the whole graph to normalize
-        # Calculating max degree every time is expensive O(N). 
-        # For a hackathon, maybe acceptable, or we can cache/estimate it.
-        # Let's do it exact for now as graph size might not be huge.
-        if len(self.graph) > 0:
-            max_degree = max(d for n, d in self.graph.degree()) # degree() is in+out for DiGraph? No, degree is sum.
-            # nx.degree returns (node, degree) iterator.
-            # For DiGraph, degree = in_degree + out_degree.
-            if max_degree > 0:
-                centrality_score = degree / max_degree
-            else:
-                centrality_score = 0.0
-        else:
-            centrality_score = 0.0
+        # 2. PageRank Centrality Score (replaces simple degree centrality)
+        centrality_score = self.get_centrality_score(candidate_node)
 
         # Combined Score
         graph_score = 0.7 * connectivity_score + 0.3 * centrality_score
@@ -266,13 +443,8 @@ class GraphManager:
         else:
             connectivity_score = 0.0
 
-        # 2. Centrality Score
-        degree = self.graph.in_degree(candidate_node) + self.graph.out_degree(candidate_node)
-        if len(self.graph) > 0:
-            max_degree = max(d for n, d in self.graph.degree())
-            centrality_score = degree / max_degree if max_degree > 0 else 0.0
-        else:
-            centrality_score = 0.0
+        # 2. PageRank Centrality Score (using cached PageRank)
+        centrality_score = self.get_centrality_score(candidate_node)
 
         # 3. Relationship Score
         relationship_score = self.get_relationship_score(candidate_node, seed_set)

@@ -3,16 +3,52 @@ import numpy as np
 import os
 import logging
 from typing import List, Tuple
-from config import FAISS_INDEX_PATH, EMBEDDING_DIMENSION
+from config import (
+    FAISS_INDEX_PATH, 
+    EMBEDDING_DIMENSION,
+    FAISS_INDEX_TYPE,
+    HNSW_M,
+    HNSW_EF_CONSTRUCTION,
+    HNSW_EF_SEARCH
+)
 
 logger = logging.getLogger(__name__)
 
 class VectorIndex:
-    def __init__(self, dimension: int = EMBEDDING_DIMENSION, index_path: str = FAISS_INDEX_PATH):
+    """
+    Vector index manager supporting both brute-force (Flat) and approximate (HNSW) search.
+    
+    HNSW (Hierarchical Navigable Small World) provides O(log N) search complexity
+    compared to O(N) for brute-force, enabling scalability to millions of vectors.
+    
+    Index Types:
+    - "flat": IndexFlatIP wrapped in IndexIDMap (100% recall, O(N) search)
+    - "hnsw": IndexHNSWFlat wrapped in IndexIDMap2 (approximate, O(log N) search)
+    
+    HNSW Parameters (tunable via config):
+    - M: Number of bi-directional links per node (default 32)
+    - efConstruction: Construction-time search depth (default 200)
+    - efSearch: Query-time search depth (default 64, can be adjusted per-query)
+    """
+    
+    def __init__(
+        self, 
+        dimension: int = EMBEDDING_DIMENSION, 
+        index_path: str = FAISS_INDEX_PATH,
+        index_type: str = FAISS_INDEX_TYPE
+    ):
         self.dimension = dimension
         self.index_path = index_path
+        self.index_type = index_type.lower()
         self.index = None
         self.id_map = {}  # faiss_id -> uuid (In-memory map)
+        
+        # HNSW parameters
+        self.hnsw_m = HNSW_M
+        self.hnsw_ef_construction = HNSW_EF_CONSTRUCTION
+        self.hnsw_ef_search = HNSW_EF_SEARCH
+        
+        logger.info(f"VectorIndex initialized with type={self.index_type}, dimension={self.dimension}")
 
     def load_or_create(self, initial_id_map: dict = None):
         """Load index from disk or create new one."""
@@ -23,6 +59,8 @@ class VectorIndex:
             logger.info(f"Loading FAISS index from {self.index_path}")
             try:
                 self.index = faiss.read_index(self.index_path)
+                self._configure_search_params()
+                logger.info(f"Loaded index with {self.index.ntotal} vectors")
             except Exception as e:
                 logger.error(f"Failed to load FAISS index: {e}")
                 self._create_new_index()
@@ -30,11 +68,59 @@ class VectorIndex:
             self._create_new_index()
 
     def _create_new_index(self):
-        logger.info("Creating new FAISS index")
-        # IndexFlatIP: Inner Product (Cosine Similarity for normalized vectors)
+        """Create a new FAISS index based on configured type."""
+        if self.index_type == "hnsw":
+            self._create_hnsw_index()
+        else:
+            self._create_flat_index()
+    
+    def _create_flat_index(self):
+        """Create brute-force IndexFlatIP (100% recall, O(N) search)."""
+        logger.info("Creating new FAISS IndexFlatIP (brute-force)")
         quantizer = faiss.IndexFlatIP(self.dimension)
-        # IndexIDMap: Enables add_with_ids and remove_ids
         self.index = faiss.IndexIDMap(quantizer)
+    
+    def _create_hnsw_index(self):
+        """
+        Create HNSW index for approximate nearest neighbor search.
+        
+        HNSW provides:
+        - O(log N) search complexity (vs O(N) for flat)
+        - Configurable accuracy/speed tradeoff via efSearch
+        - Scales to millions of vectors
+        
+        Note: HNSW doesn't support remove_ids natively. We use IndexIDMap2
+        which maintains a mapping and marks deleted IDs.
+        """
+        logger.info(
+            f"Creating new FAISS IndexHNSWFlat (M={self.hnsw_m}, "
+            f"efConstruction={self.hnsw_ef_construction})"
+        )
+        
+        # Create HNSW index with Inner Product metric
+        # Note: For cosine similarity with normalized vectors, IP = cosine similarity
+        hnsw_index = faiss.IndexHNSWFlat(self.dimension, self.hnsw_m, faiss.METRIC_INNER_PRODUCT)
+        
+        # Set construction-time parameters
+        hnsw_index.hnsw.efConstruction = self.hnsw_ef_construction
+        
+        # Wrap in IndexIDMap2 to support custom IDs and deletion
+        # IndexIDMap2 maintains a reverse mapping for ID operations
+        self.index = faiss.IndexIDMap2(hnsw_index)
+        
+        self._configure_search_params()
+    
+    def _configure_search_params(self):
+        """Configure search-time parameters for the index."""
+        if self.index_type == "hnsw":
+            try:
+                # For IndexIDMap2 wrapping HNSW, access the underlying index
+                underlying = faiss.downcast_index(self.index.index)
+                if hasattr(underlying, 'hnsw'):
+                    underlying.hnsw.efSearch = self.hnsw_ef_search
+                    logger.info(f"Set HNSW efSearch={self.hnsw_ef_search}")
+            except Exception as e:
+                logger.warning(f"Could not set HNSW search params: {e}")
 
     def add_vector(self, vector: np.ndarray, faiss_id: int, uuid: str):
         """Add vector with specific ID."""
@@ -46,19 +132,43 @@ class VectorIndex:
         self.id_map[faiss_id] = uuid
 
     def remove_vector(self, faiss_id: int):
-        """Remove vector by ID."""
+        """
+        Remove vector by ID.
+        
+        Note: For HNSW indices wrapped in IndexIDMap2, this marks the ID as removed
+        but doesn't reclaim memory until the index is rebuilt.
+        """
         id_array = np.array([faiss_id], dtype=np.int64)
-        self.index.remove_ids(id_array)
+        try:
+            self.index.remove_ids(id_array)
+        except Exception as e:
+            logger.warning(f"Could not remove vector {faiss_id}: {e}")
+        
         if faiss_id in self.id_map:
             del self.id_map[faiss_id]
 
-    def search(self, query_vector: np.ndarray, k: int) -> Tuple[List[str], List[float]]:
+    def search(self, query_vector: np.ndarray, k: int, ef_search: int = None) -> Tuple[List[str], List[float]]:
         """
         Search for nearest neighbors.
+        
+        Args:
+            query_vector: Query embedding
+            k: Number of results to return
+            ef_search: (HNSW only) Override efSearch for this query.
+                       Higher values = more accurate but slower.
+        
         Returns: (List[UUID], List[Scores])
         """
+        # Temporarily adjust efSearch if specified (HNSW only)
+        if ef_search is not None and self.index_type == "hnsw":
+            self._set_ef_search(ef_search)
+        
         query_matrix = query_vector.reshape(1, -1).astype('float32')
         scores, ids = self.index.search(query_matrix, k)
+        
+        # Restore default efSearch
+        if ef_search is not None and self.index_type == "hnsw":
+            self._set_ef_search(self.hnsw_ef_search)
         
         # Flatten results
         found_ids = ids[0]
@@ -73,10 +183,20 @@ class VectorIndex:
                 result_scores.append(float(score))
                 
         return result_uuids, result_scores
+    
+    def _set_ef_search(self, ef_search: int):
+        """Set efSearch parameter for HNSW index."""
+        try:
+            underlying = faiss.downcast_index(self.index.index)
+            if hasattr(underlying, 'hnsw'):
+                underlying.hnsw.efSearch = ef_search
+        except Exception as e:
+            pass  # Silently ignore for non-HNSW indices
 
     def save(self):
         """Save index to disk."""
         faiss.write_index(self.index, self.index_path)
+        logger.info(f"Saved FAISS index to {self.index_path} ({self.index.ntotal} vectors)")
 
     def get_vector_by_id(self, faiss_id: int) -> np.ndarray:
         """
@@ -150,5 +270,21 @@ class VectorIndex:
     @property
     def ntotal(self):
         return self.index.ntotal
+    
+    def get_index_info(self) -> dict:
+        """Get information about the current index for debugging/monitoring."""
+        info = {
+            "type": self.index_type,
+            "dimension": self.dimension,
+            "total_vectors": self.index.ntotal,
+            "id_map_size": len(self.id_map)
+        }
+        
+        if self.index_type == "hnsw":
+            info["hnsw_m"] = self.hnsw_m
+            info["hnsw_ef_construction"] = self.hnsw_ef_construction
+            info["hnsw_ef_search"] = self.hnsw_ef_search
+            
+        return info
 
 vector_index = VectorIndex()

@@ -26,6 +26,52 @@ if page == "System Health":
     health = check_health()
     if health:
         st.success("Backend is Online")
+        
+        # Main health metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Nodes", health.get('nodes', 'N/A'))
+        with col2:
+            st.metric("Total Edges", health.get('edges', 'N/A'))
+        with col3:
+            st.metric("Status", "✅ Healthy" if health.get('status') == 'healthy' else "⚠️ Check Required")
+        
+        st.divider()
+        
+        # Scalability Features Status
+        st.subheader("🚀 Scalability Features")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### FAISS Index")
+            st.info("""
+            **HNSW Index** (Hierarchical Navigable Small World)
+            - O(log N) search complexity vs O(N) brute-force
+            - Configured: M=32, efConstruction=200, efSearch=64
+            - Ideal for 100K+ vectors
+            """)
+            
+        with col2:
+            st.markdown("### Graph Centrality")
+            st.info("""
+            **PageRank Algorithm**
+            - Better importance scoring than simple degree
+            - Damping factor: 0.85
+            - Cached with 5-minute TTL
+            - Used in hybrid search ranking
+            """)
+        
+        st.markdown("### 📁 Persistent Storage")
+        st.info("""
+        **GraphML Format** - Human-readable XML-based graph storage
+        - More robust than pickle serialization
+        - Cross-platform compatible
+        - Stores nodes, edges, and all attributes
+        """)
+        
+        st.divider()
+        st.subheader("Raw Health Data")
         st.json(health)
     else:
         st.error("Backend is Offline. Please start the server.")

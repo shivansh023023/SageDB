@@ -65,6 +65,28 @@ async def startup_event():
     logger.info("System Ready.")
 
 
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Save FAISS index and Graph to disk on graceful shutdown."""
+    logger.info("Shutting down - saving indices to disk...")
+    
+    # Save FAISS index
+    try:
+        vector_index.save()
+        logger.info("FAISS index saved successfully.")
+    except Exception as e:
+        logger.error(f"Failed to save FAISS index: {e}")
+    
+    # Save Graph (GraphML format)
+    try:
+        graph_manager.save()
+        logger.info("Graph saved successfully.")
+    except Exception as e:
+        logger.error(f"Failed to save graph: {e}")
+    
+    logger.info("Shutdown complete.")
+
+
 def rebuild_faiss_from_sqlite():
     """Rebuild FAISS index from SQLite data."""
     logger.info("Starting FAISS index rebuild from SQLite...")
