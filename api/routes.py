@@ -912,3 +912,168 @@ async def hybrid_search_stream(query: SearchQuery):
         }
     )
 
+
+@router.post("/v1/admin/nuke")
+@write_locked
+def nuke_database():
+    """
+    Completely clear all data from the database.
+    WARNING: This is irreversible and will delete ALL nodes, edges, and vectors.
+    """
+    try:
+        # Clear SQLite (nodes, edges, chunks, documents)
+        result = sqlite_manager.nuke_all()
+        
+        # Clear FAISS vector index
+        vector_index.clear()
+        
+        # Clear NetworkX graph
+        graph_manager.graph.clear()
+        
+        logger.warning(f"Database nuked: {result}")
+        return {
+            "status": "success",
+            "message": "All data has been deleted",
+            "deleted": result
+        }
+    except Exception as e:
+        logger.error(f"Error nuking database: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/v1/admin/generate-edges")
+@write_locked
+def generate_edges():
+    """
+    Generate semantic similarity edges for all existing chunks.
+    Creates next_chunk, similar_to, and related_to edges based on cosine similarity.
+    """
+    import sqlite3
+    import numpy as np
+    from config import DATA_DIR
+    
+    try:
+        # Connect directly to SQLite for bulk operations
+        conn = sqlite3.connect(f'{DATA_DIR}/sqlite.db', timeout=30.0)
+        cursor = conn.cursor()
+        
+        # Get all chunks with their texts
+        chunks = cursor.execute("""
+            SELECT n.uuid, n.text, c.document_id, c.chunk_index
+            FROM chunks c
+            JOIN nodes n ON c.node_uuid = n.uuid
+            ORDER BY c.document_id, c.chunk_index
+        """).fetchall()
+        
+        if not chunks:
+            return {"status": "success", "message": "No chunks found", "edges_added": 0}
+        
+        chunk_uuids = [c[0] for c in chunks]
+        chunk_texts = [c[1] for c in chunks]
+        chunk_doc_ids = [c[2] for c in chunks]
+        chunk_positions = [c[3] for c in chunks]
+        
+        # Compute embeddings
+        embeddings = embedding_service.encode_batch(chunk_texts, batch_size=32)
+        
+        # Edge weights from config
+        from ingestion.config import EDGE_WEIGHTS
+        
+        edges_added = 0
+        
+        # Group by document
+        doc_chunks = {}
+        for i, doc_id in enumerate(chunk_doc_ids):
+            if doc_id not in doc_chunks:
+                doc_chunks[doc_id] = []
+            doc_chunks[doc_id].append(i)
+        
+        for doc_id, indices in doc_chunks.items():
+            indices = sorted(indices, key=lambda i: chunk_positions[i])
+            
+            # Sequential edges (next_chunk)
+            for i in range(len(indices) - 1):
+                idx_curr = indices[i]
+                idx_next = indices[i + 1]
+                
+                cosine_sim = float(np.dot(embeddings[idx_curr], embeddings[idx_next]))
+                
+                base_weight = EDGE_WEIGHTS['next_chunk']
+                similarity_boost = 0.15 * cosine_sim
+                dynamic_weight = min(1.0, base_weight * (1 + similarity_boost))
+                
+                try:
+                    cursor.execute("""
+                        INSERT INTO edges (source_uuid, target_uuid, relation, weight)
+                        VALUES (?, ?, ?, ?)
+                    """, (chunk_uuids[idx_curr], chunk_uuids[idx_next], 'next_chunk', dynamic_weight))
+                    edges_added += 1
+                    
+                    # Also add to graph
+                    graph_manager.add_edge(
+                        chunk_uuids[idx_curr], chunk_uuids[idx_next],
+                        relation='next_chunk', weight=dynamic_weight
+                    )
+                except sqlite3.IntegrityError:
+                    pass  # Edge already exists
+                
+                # similar_to for very high similarity
+                if cosine_sim > 0.80:
+                    sim_weight = EDGE_WEIGHTS['similar_to'] * cosine_sim
+                    try:
+                        cursor.execute("""
+                            INSERT INTO edges (source_uuid, target_uuid, relation, weight)
+                            VALUES (?, ?, ?, ?)
+                        """, (chunk_uuids[idx_curr], chunk_uuids[idx_next], 'similar_to', sim_weight))
+                        edges_added += 1
+                        graph_manager.add_edge(
+                            chunk_uuids[idx_curr], chunk_uuids[idx_next],
+                            relation='similar_to', weight=sim_weight
+                        )
+                    except sqlite3.IntegrityError:
+                        pass
+            
+            # Cross-chunk semantic similarity (related_to)
+            for i in range(len(indices)):
+                for j in range(i + 2, len(indices)):
+                    idx_i = indices[i]
+                    idx_j = indices[j]
+                    
+                    cosine_sim = float(np.dot(embeddings[idx_i], embeddings[idx_j]))
+                    
+                    if cosine_sim >= 0.75:
+                        weight = EDGE_WEIGHTS['related_to'] * cosine_sim
+                        
+                        for src, tgt in [(idx_i, idx_j), (idx_j, idx_i)]:
+                            try:
+                                cursor.execute("""
+                                    INSERT INTO edges (source_uuid, target_uuid, relation, weight)
+                                    VALUES (?, ?, ?, ?)
+                                """, (chunk_uuids[src], chunk_uuids[tgt], 'related_to', weight))
+                                edges_added += 1
+                                graph_manager.add_edge(
+                                    chunk_uuids[src], chunk_uuids[tgt],
+                                    relation='related_to', weight=weight
+                                )
+                            except sqlite3.IntegrityError:
+                                pass
+        
+        conn.commit()
+        conn.close()
+        
+        # Save graph to disk
+        graph_manager.save()
+        
+        logger.info(f"Generated {edges_added} edges")
+        return {
+            "status": "success",
+            "message": f"Generated {edges_added} semantic edges",
+            "edges_added": edges_added,
+            "chunks_processed": len(chunks),
+            "documents_processed": len(doc_chunks)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating edges: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+

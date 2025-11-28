@@ -414,4 +414,10 @@ class VectorIndex:
             
         return info
 
+    def clear(self):
+        """Clear all vectors from the index."""
+        self._create_new_index()
+        self.id_map = {}
+        logger.info("Cleared FAISS index")
+
 vector_index = VectorIndex()

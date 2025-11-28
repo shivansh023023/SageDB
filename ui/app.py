@@ -581,6 +581,58 @@ if page == "💚 System Health":
         with col_c:
             if st.button("🔍 Go to Search", use_container_width=True):
                 st.info("Navigate using the sidebar →")
+        
+        st.divider()
+        
+        # Edge Generation
+        st.markdown("#### 🔗 Edge Generation")
+        st.info("Generate semantic similarity edges between chunks. Run this after ingesting new data.")
+        
+        col_edge1, col_edge2 = st.columns([2, 1])
+        with col_edge1:
+            if st.button("🔗 Generate Edges", use_container_width=True, type="primary"):
+                with st.spinner("Generating edges... This may take a moment."):
+                    try:
+                        edge_res = session.post(f"{API_URL}/v1/admin/generate-edges", timeout=120)
+                        if edge_res.status_code == 200:
+                            result = edge_res.json()
+                            st.success(f"✅ Generated {result.get('edges_added', 0)} edges from {result.get('chunks_processed', 0)} chunks!")
+                            st.rerun()
+                        else:
+                            st.error(f"Failed: {edge_res.text}")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+        with col_edge2:
+            st.metric("Current Edges", health.get('edges', 0))
+        
+        st.divider()
+        
+        # Danger Zone
+        st.markdown("#### ⚠️ Danger Zone")
+        with st.expander("🔴 Database Reset Options", expanded=False):
+            st.warning("**Warning:** These actions are irreversible!")
+            
+            confirm_nuke = st.checkbox(
+                "I understand this will permanently delete ALL data",
+                key="confirm_nuke"
+            )
+            
+            if st.button(
+                "💣 Nuke All Data",
+                type="primary",
+                disabled=not confirm_nuke,
+                use_container_width=True
+            ):
+                try:
+                    nuke_res = session.post(f"{API_URL}/v1/admin/nuke", timeout=30)
+                    if nuke_res.status_code == 200:
+                        result = nuke_res.json()
+                        st.success(f"✅ Database nuked! Deleted {result.get('deleted', {}).get('nodes', 0)} nodes and {result.get('deleted', {}).get('edges', 0)} edges.")
+                        st.rerun()
+                    else:
+                        st.error(f"Failed: {nuke_res.text}")
+                except Exception as e:
+                    st.error(f"Error: {e}")
     else:
         st.error("🔴 Backend is Offline")
         st.warning("""

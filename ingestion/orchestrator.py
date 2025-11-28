@@ -322,131 +322,136 @@ class IngestionOrchestrator:
         """
         Create relationships between chunks.
         Enhanced with semantic similarity-based edge weights.
+        Uses migrate_edges.py approach for robust edge creation.
         
         Returns:
             Number of edges created
         """
         edges_created = 0
         
-        # Compute embeddings for all chunks to enable similarity calculations
-        chunk_texts = [chunk.text for chunk in chunks]
-        chunk_embeddings = self.embedding_service.encode_batch(chunk_texts)
+        # IMPORTANT: Only process if we have matching chunks and UUIDs
+        # If some chunks failed to store, chunks and chunk_uuids may be misaligned
+        # We need to recompute embeddings for ONLY the successfully stored chunks
+        if len(chunk_uuids) == 0:
+            logger.warning("No chunks to create relationships for")
+            return 0
+        
+        # Get the texts for successfully stored chunks by fetching from DB
+        # This ensures we're working with the correct data
+        try:
+            stored_nodes = self.sqlite_manager.get_nodes_batch(chunk_uuids)
+            if not stored_nodes:
+                logger.warning("Could not fetch stored nodes for relationship creation")
+                return 0
+            
+            # Build ordered list matching chunk_uuids order
+            uuid_to_text = {node['uuid']: node['text'] for node in stored_nodes}
+            chunk_texts = [uuid_to_text.get(uuid, '') for uuid in chunk_uuids]
+            
+            # Filter out any empty texts (failed lookups)
+            valid_indices = [i for i, text in enumerate(chunk_texts) if text]
+            if len(valid_indices) != len(chunk_uuids):
+                logger.warning(f"Some chunks not found in DB: {len(chunk_uuids)} expected, {len(valid_indices)} found")
+                chunk_uuids = [chunk_uuids[i] for i in valid_indices]
+                chunk_texts = [chunk_texts[i] for i in valid_indices]
+            
+            if len(chunk_uuids) < 2:
+                logger.info("Not enough chunks for relationships")
+                return 0
+            
+            # Compute embeddings for all stored chunks
+            chunk_embeddings = self.embedding_service.encode_batch(chunk_texts)
+            
+        except Exception as e:
+            logger.error(f"Failed to prepare chunks for relationship creation: {e}")
+            return 0
         
         # Create sequential relationships (next_chunk) with semantic similarity boost
         if config.create_sequential_edges:
             for i in range(len(chunk_uuids) - 1):
                 try:
                     # Compute cosine similarity between adjacent chunks
-                    cosine_sim = np.dot(chunk_embeddings[i], chunk_embeddings[i + 1])
+                    cosine_sim = float(np.dot(chunk_embeddings[i], chunk_embeddings[i + 1]))
                     
                     # Dynamic weight: base weight * (1 + similarity_boost)
-                    # High similarity between adjacent chunks = stronger relationship
                     base_weight = EDGE_WEIGHTS["next_chunk"]
-                    similarity_boost = 0.15 * cosine_sim  # Up to 15% boost
+                    similarity_boost = 0.15 * cosine_sim
                     dynamic_weight = min(1.0, base_weight * (1 + similarity_boost))
                     
-                    self.sqlite_manager.add_edge(
+                    # Use add_edge_safe to ignore duplicates
+                    edge_id = self.sqlite_manager.add_edge_safe(
                         source_uuid=chunk_uuids[i],
                         target_uuid=chunk_uuids[i + 1],
                         relation="next_chunk",
                         weight=dynamic_weight
                     )
-                    self.graph_manager.add_edge(
-                        chunk_uuids[i], chunk_uuids[i + 1],
-                        relation="next_chunk",
-                        weight=dynamic_weight
-                    )
-                    edges_created += 1
+                    if edge_id is not None:
+                        self.graph_manager.add_edge(
+                            chunk_uuids[i], chunk_uuids[i + 1],
+                            relation="next_chunk",
+                            weight=dynamic_weight
+                        )
+                        edges_created += 1
                     
                     # If similarity is very high (>0.8), add explicit "similar_to" edge
                     if cosine_sim > 0.80:
                         sim_weight = EDGE_WEIGHTS["similar_to"] * cosine_sim
-                        self.sqlite_manager.add_edge(
+                        edge_id = self.sqlite_manager.add_edge_safe(
                             source_uuid=chunk_uuids[i],
                             target_uuid=chunk_uuids[i + 1],
                             relation="similar_to",
                             weight=sim_weight
                         )
-                        self.graph_manager.add_edge(
-                            chunk_uuids[i], chunk_uuids[i + 1],
-                            relation="similar_to",
-                            weight=sim_weight
-                        )
-                        edges_created += 1
+                        if edge_id is not None:
+                            self.graph_manager.add_edge(
+                                chunk_uuids[i], chunk_uuids[i + 1],
+                                relation="similar_to",
+                                weight=sim_weight
+                            )
+                            edges_created += 1
                         
                 except Exception as e:
                     logger.warning(f"Failed to create next_chunk edge: {e}")
         
-        # Create section_of relationships based on hierarchy
-        if config.preserve_hierarchy:
-            hierarchy_map: Dict[str, str] = {}  # title -> uuid
-            
-            for chunk_uuid, chunk in zip(chunk_uuids, chunks):
-                if chunk.hierarchy and len(chunk.hierarchy) > 1:
-                    # This chunk's parent is the previous level in hierarchy
-                    parent_title = chunk.hierarchy[-2] if len(chunk.hierarchy) >= 2 else None
-                    
-                    if parent_title and parent_title in hierarchy_map:
-                        try:
-                            parent_uuid = hierarchy_map[parent_title]
-                            self.sqlite_manager.add_edge(
-                                source_uuid=chunk_uuid,
-                                target_uuid=parent_uuid,
-                                relation="section_of",
-                                weight=EDGE_WEIGHTS["section_of"]
-                            )
-                            self.graph_manager.add_edge(
-                                chunk_uuid, parent_uuid,
-                                relation="section_of",
-                                weight=EDGE_WEIGHTS["section_of"]
-                            )
-                            edges_created += 1
-                        except Exception as e:
-                            logger.warning(f"Failed to create section_of edge: {e}")
-                
-                # Track this chunk's title for future parent lookups
-                if chunk.title:
-                    hierarchy_map[chunk.title] = chunk_uuid
-        
         # Create cross-chunk semantic similarity edges (non-sequential)
-        # Only for chunks that are highly similar but not adjacent
-        SIMILARITY_THRESHOLD = 0.75  # Only create edges for strong semantic overlap
+        SIMILARITY_THRESHOLD = 0.75
         for i in range(len(chunk_uuids)):
-            for j in range(i + 2, len(chunk_uuids)):  # Skip adjacent pairs (already handled)
+            for j in range(i + 2, len(chunk_uuids)):  # Skip adjacent pairs
                 try:
-                    cosine_sim = np.dot(chunk_embeddings[i], chunk_embeddings[j])
+                    cosine_sim = float(np.dot(chunk_embeddings[i], chunk_embeddings[j]))
                     
                     if cosine_sim >= SIMILARITY_THRESHOLD:
-                        # Create bidirectional "related_to" edges for cross-references
                         weight = EDGE_WEIGHTS["related_to"] * cosine_sim
                         
                         # Forward edge
-                        self.sqlite_manager.add_edge(
+                        edge_id = self.sqlite_manager.add_edge_safe(
                             source_uuid=chunk_uuids[i],
                             target_uuid=chunk_uuids[j],
                             relation="related_to",
                             weight=weight
                         )
-                        self.graph_manager.add_edge(
-                            chunk_uuids[i], chunk_uuids[j],
-                            relation="related_to",
-                            weight=weight
-                        )
-                        edges_created += 1
+                        if edge_id is not None:
+                            self.graph_manager.add_edge(
+                                chunk_uuids[i], chunk_uuids[j],
+                                relation="related_to",
+                                weight=weight
+                            )
+                            edges_created += 1
                         
                         # Backward edge
-                        self.sqlite_manager.add_edge(
+                        edge_id = self.sqlite_manager.add_edge_safe(
                             source_uuid=chunk_uuids[j],
                             target_uuid=chunk_uuids[i],
                             relation="related_to",
                             weight=weight
                         )
-                        self.graph_manager.add_edge(
-                            chunk_uuids[j], chunk_uuids[i],
-                            relation="related_to",
-                            weight=weight
-                        )
-                        edges_created += 1
+                        if edge_id is not None:
+                            self.graph_manager.add_edge(
+                                chunk_uuids[j], chunk_uuids[i],
+                                relation="related_to",
+                                weight=weight
+                            )
+                            edges_created += 1
                         
                 except Exception as e:
                     logger.warning(f"Failed to create related_to edge: {e}")

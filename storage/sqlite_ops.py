@@ -397,6 +397,28 @@ class SQLiteManager:
         finally:
             conn.close()
 
+    def add_edge_safe(self, source_uuid: str, target_uuid: str, relation: str, weight: float) -> Optional[int]:
+        """Add edge, ignoring duplicates. Returns edge ID or None if duplicate."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT OR IGNORE INTO edges (source_uuid, target_uuid, relation, weight) VALUES (?, ?, ?, ?)",
+                (source_uuid, target_uuid, relation, weight)
+            )
+            conn.commit()
+            if cursor.rowcount > 0:
+                # Get the last inserted ID
+                cursor.execute("SELECT last_insert_rowid()")
+                return cursor.fetchone()[0]
+            return None  # Duplicate was ignored
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to add edge to SQLite: {e}")
+            return None
+        finally:
+            conn.close()
+
     def get_edge(self, edge_id: int) -> Optional[Dict]:
         """Get edge by ID."""
         conn = self._get_conn()
@@ -751,6 +773,36 @@ class SQLiteManager:
         except Exception as e:
             conn.rollback()
             logger.error(f"Failed to delete document from SQLite: {e}")
+            raise e
+        finally:
+            conn.close()
+
+    def nuke_all(self) -> Dict[str, int]:
+        """Delete ALL data from all tables. Returns counts of deleted items."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Get counts before deletion
+            cursor.execute("SELECT COUNT(*) FROM nodes")
+            node_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM edges")
+            edge_count = cursor.fetchone()[0]
+            
+            # Delete all data
+            cursor.execute("DELETE FROM edges")
+            cursor.execute("DELETE FROM chunks")
+            cursor.execute("DELETE FROM documents")
+            cursor.execute("DELETE FROM nodes")
+            
+            # Reset FAISS ID counter
+            cursor.execute("UPDATE faiss_metadata SET value = 0 WHERE key = 'next_id'")
+            
+            conn.commit()
+            logger.info(f"Nuked all data: {node_count} nodes, {edge_count} edges")
+            return {"nodes": node_count, "edges": edge_count}
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to nuke database: {e}")
             raise e
         finally:
             conn.close()
