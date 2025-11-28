@@ -304,7 +304,7 @@ st.markdown("""
     
     /* Sliders - purple accent */
     .stSlider [data-baseweb="slider"] {
-        background: #334155 !important;
+        background: transparent !important;
     }
     .stSlider [role="slider"] {
         background: #6366f1 !important;
