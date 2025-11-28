@@ -307,7 +307,7 @@ st.markdown("""
         background: transparent !important;
     }
     .stSlider [role="slider"] {
-        background: #6366f1 !important;
+        background: #7e2525 !important;
     }
     
     /* Radio buttons */
