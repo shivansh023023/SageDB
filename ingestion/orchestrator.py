@@ -221,7 +221,7 @@ class IngestionOrchestrator:
                     "title": chunk.title,
                     "hierarchy": chunk.hierarchy,
                     "source": filename,
-                    "format": format_hint or "text",
+                    "format": file_type or "text",
                     **(chunk.metadata or {})
                 }
                 
@@ -329,7 +329,7 @@ class IngestionOrchestrator:
         edges_created = 0
         
         # Compute embeddings for all chunks to enable similarity calculations
-        chunk_texts = [chunk.content for chunk in chunks]
+        chunk_texts = [chunk.text for chunk in chunks]
         chunk_embeddings = self.embedding_service.encode_batch(chunk_texts)
         
         # Create sequential relationships (next_chunk) with semantic similarity boost

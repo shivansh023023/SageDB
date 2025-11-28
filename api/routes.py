@@ -243,13 +243,9 @@ def vector_search(query: VectorSearchQuery):
         if not uuids:
             return SearchResponse(results=[], count=0)
         
-        # Filter by relevance threshold first
-        filtered_pairs = [(u, s) for u, s in zip(uuids, scores) if s >= MINIMUM_RELEVANCE_THRESHOLD]
-        if not filtered_pairs:
-            return SearchResponse(results=[], count=0)
-        
-        # Apply offset pagination
-        paginated_pairs = filtered_pairs[query.offset:query.offset + query.top_k]
+        # Apply offset pagination (no relevance threshold filtering)
+        all_pairs = list(zip(uuids, scores))
+        paginated_pairs = all_pairs[query.offset:query.offset + query.top_k]
         if not paginated_pairs:
             return SearchResponse(results=[], count=0)
         
@@ -362,19 +358,8 @@ def hybrid_search(query: SearchQuery):
                 )
         timings['dedup'] = (_time.time() - _td) * 1000
         
-        # 3. Filter by relevance threshold
-        # NOTE: Skip threshold filter for RRF-fused results (RRF scores are rank-based, not similarity-based)
-        if multi_query_fusion:
-            # RRF already ranked by relevance, just take top results
-            filtered_results = merged_results
-        else:
-            filtered_results = [
-                r for r in merged_results 
-                if r.get('score', 0) >= MINIMUM_RELEVANCE_THRESHOLD
-            ]
-        
-        # 4. Apply offset pagination and Top K
-        final_results = filtered_results[query.offset:query.offset + query.top_k]
+        # 3. Apply offset pagination and Top K (no relevance threshold filtering)
+        final_results = merged_results[query.offset:query.offset + query.top_k]
         
         # 5. Provenance Tracking
         if final_results:
@@ -620,14 +605,8 @@ def context_aware_search(query: ContextSearchQuery):
             all_candidates, graph_scores, alpha=alpha, beta=beta
         )
         
-        # 8. Filter low relevance
-        filtered_results = [
-            r for r in fused_results 
-            if r.get('score', 0) >= MINIMUM_RELEVANCE_THRESHOLD
-        ]
-        
-        # 9. Apply offset pagination and take top K
-        top_results = filtered_results[query.offset:query.offset + query.top_k]
+        # 8. Apply offset pagination and take top K (no relevance threshold filtering)
+        top_results = fused_results[query.offset:query.offset + query.top_k]
         
         # 10. CONTEXT EXPANSION - The key feature!
         # For each result, get surrounding chunks via graph traversal
@@ -903,9 +882,6 @@ async def hybrid_search_stream(query: SearchQuery):
                 metadata_filter=query.metadata_filter,
                 use_ppr=query.use_ppr
             )
-            
-            # Filter by relevance
-            results = [r for r in results if r.get('score', 0) >= MINIMUM_RELEVANCE_THRESHOLD]
             
             # Dedup if requested
             if query.deduplicate:

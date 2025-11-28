@@ -1189,10 +1189,11 @@ Integration tests.
 | N+1 Query Problem                   | ✅ RESOLVED    | Implemented batch hydration via `get_nodes_batch()`                |
 | No Offset Pagination                | ✅ RESOLVED    | Added `offset` parameter to all search endpoints                   |
 | Query Decomposition                 | ✅ RESOLVED    | Automatic splitting for "X vs Y", "between A and B" queries        |
-| RRF Threshold Bug                   | ✅ RESOLVED    | Skip MINIMUM_RELEVANCE_THRESHOLD for multi-query fusion            |
+| RRF Threshold Bug                   | ✅ RESOLVED    | Removed MINIMUM_RELEVANCE_THRESHOLD filter entirely                |
 | Only next_chunk edges               | ✅ RESOLVED    | Added semantic similarity edges (`similar_to`, `related_to`)       |
 | Static edge weights                 | ✅ RESOLVED    | Dynamic weights based on cosine similarity during ingestion        |
 | No interactive visualization        | ✅ RESOLVED    | Built 3D force-directed graph with Vite + React                    |
+| Raw text ingestion error            | ✅ RESOLVED    | Fixed Chunk.content → Chunk.text attribute access                  |
 | In-Memory Graph (RAM limits)        | ⚠️ KNOWN       | NetworkX in-memory. Would need disk-based DB for >100K nodes       |
 | Ground Truth for Benchmark          | ⚠️ PENDING     | `/v1/benchmark` endpoint ready, need labeled data                  |
 | CLI Tool                            | ❌ NOT STARTED | Web UI built, CLI is optional enhancement                          |
