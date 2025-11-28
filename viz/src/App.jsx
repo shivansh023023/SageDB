@@ -9,10 +9,10 @@ function App() {
   const [viewMode, setViewMode] = useState('graph'); // 'graph' or 'vector'
   const [selectedNode, setSelectedNode] = useState(null);
   const [controlParams, setControlParams] = useState({
-    nodeSize: 4,
-    linkWidth: 1,
-    chargeStrength: 100,
-    linkDistance: 50
+    nodeSize: 3,
+    linkWidth: 0.5,
+    chargeStrength: 300,  // Higher repulsion to spread nodes
+    linkDistance: 100     // Longer links
   });
 
   const handleNodeClick = (node) => {

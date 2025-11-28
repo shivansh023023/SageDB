@@ -16,10 +16,13 @@ const GraphCanvas = ({ onNodeClick, controlParams }) => {
         axios.get('http://localhost:8000/v1/edges?limit=2000')
       ]);
 
-      const nodes = nodesRes.data.map(node => ({
+      const nodes = nodesRes.data.map((node, i) => ({
         id: node.uuid,
         ...node,
-        val: 1 // Default size
+        val: 1,
+        // Random initial positions to prevent clustering
+        x: (Math.random() - 0.5) * 1000,
+        y: (Math.random() - 0.5) * 1000
       }));
 
       const links = edgesRes.data.map(edge => ({
@@ -28,7 +31,18 @@ const GraphCanvas = ({ onNodeClick, controlParams }) => {
         ...edge
       }));
 
+      console.log(`Loaded ${nodes.length} nodes and ${links.length} links`);
       setGraphData({ nodes, links });
+      
+      // Force reconfiguration after data loads
+      setTimeout(() => {
+        if (fgRef.current) {
+          // Much stronger repulsion for 500 nodes
+          fgRef.current.d3Force('charge').strength(-500).distanceMax(500);
+          fgRef.current.d3Force('link').distance(150).strength(0.1);
+          fgRef.current.d3ReheatSimulation();
+        }
+      }, 100);
     } catch (error) {
       console.error("Error fetching graph data:", error);
     }
@@ -39,11 +53,15 @@ const GraphCanvas = ({ onNodeClick, controlParams }) => {
   }, [fetchData]);
 
   useEffect(() => {
-    if (fgRef.current) {
-      fgRef.current.d3Force('charge').strength(-controlParams.chargeStrength);
-      fgRef.current.d3Force('link').distance(controlParams.linkDistance);
+    if (fgRef.current && graphData.nodes.length > 0) {
+      // Configure forces with stronger repulsion
+      fgRef.current.d3Force('charge').strength(-controlParams.chargeStrength).distanceMax(500);
+      fgRef.current.d3Force('link').distance(controlParams.linkDistance).strength(0.1);
+      
+      // Reheat the simulation to apply new forces
+      fgRef.current.d3ReheatSimulation();
     }
-  }, [controlParams]);
+  }, [controlParams, graphData]);
 
   return (
     <div className="w-full h-full bg-slate-900">
@@ -58,14 +76,24 @@ const GraphCanvas = ({ onNodeClick, controlParams }) => {
         linkDirectionalArrowLength={3.5}
         linkDirectionalArrowRelPos={1}
         
+        // Force configuration
+        enableNodeDrag={true}
+        enableZoomInteraction={true}
+        enablePanInteraction={true}
+        
+        // Initial zoom out so graph isn't cramped
+        zoom={0.5}
+        minZoom={0.1}
+        maxZoom={8}
+        
         // Custom rendering for edge labels
         linkCanvasObject={(link, ctx, globalScale) => {
           // Draw the link line
           ctx.beginPath();
           ctx.moveTo(link.source.x, link.source.y);
           ctx.lineTo(link.target.x, link.target.y);
-          ctx.strokeStyle = '#334155'; // Slate-700
-          ctx.lineWidth = controlParams.linkWidth / globalScale;
+          ctx.strokeStyle = '#64748b'; // Slate-500 (brighter)
+          ctx.lineWidth = Math.max(controlParams.linkWidth, 0.5); // Minimum width
           ctx.stroke();
 
           // Only draw label if hovered or very zoomed in
@@ -162,10 +190,10 @@ const GraphCanvas = ({ onNodeClick, controlParams }) => {
         onNodeHover={(node) => setHoverNode(node)}
         
         // Force Engine Configuration for better structure
-        d3VelocityDecay={0.1} // Lower friction for better settling
-        d3AlphaDecay={0.02} // Slower cooling
-        cooldownTicks={100}
-        onEngineStop={() => fgRef.current.zoomToFit(400)} // Auto-fit when done
+        d3VelocityDecay={0.4} // Higher friction for better control
+        d3AlphaDecay={0.0228} // Standard cooling rate
+        warmupTicks={100} // Pre-calculate some positions
+        cooldownTicks={0} // Don't auto-stop
         
         backgroundColor="#0f172a"
       />
