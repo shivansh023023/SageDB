@@ -9,10 +9,15 @@
 pip install -r requirements.txt
 
 # Start backend (port 8000)
-python main.py
+python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-# Start UI (port 8501)
+# Start Streamlit UI (port 8501)
 streamlit run ui/app.py
+
+# Start Interactive 3D Visualization (port 5174)
+cd viz
+npm install  # First time only
+npm run dev
 
 # Populate with test data
 python populate_db.py
@@ -62,6 +67,47 @@ SageDB uses a multi-layered storage approach to handle different aspects of the 
 1.  **SQLite (Metadata & Persistence)**: Acts as the source of truth for node attributes, metadata, and the mapping between different storage layers. It ensures ACID compliance for metadata updates.
 2.  **FAISS (Vector Storage)**: A high-performance library for dense vector similarity search. It stores the embeddings of the node text, enabling fast semantic retrieval.
 3.  **NetworkX (Graph Storage)**: Manages the graph topology (nodes and edges) in memory. It allows for efficient traversal, centrality calculation, and connectivity analysis.
+
+### 🆕 Enhanced Graph Relationships with Semantic Similarity
+
+SageDB now creates **intelligent, semantically-aware relationships** during data ingestion:
+
+#### Relationship Types
+
+1. **Sequential Edges (`next_chunk`)**: 
+   - Links consecutive chunks in documents
+   - **Dynamic weights** based on cosine similarity between adjacent chunks
+   - Base weight boosted by up to 15% for highly similar content
+   - Example: If two adjacent chunks discuss the same concept, their connection is stronger
+
+2. **Semantic Similarity Edges (`similar_to`)**:
+   - Created when adjacent chunks have cosine similarity > 0.8
+   - Explicitly marks high semantic overlap
+   - Weight: `0.90 × cosine_similarity`
+
+3. **Cross-Chunk References (`related_to`)**:
+   - Bidirectional edges between non-adjacent chunks with similarity > 0.75
+   - Enables discovery of related content across different parts of documents
+   - Weight: `0.75 × cosine_similarity`
+
+4. **Hierarchical Edges (`section_of`)**:
+   - Parent-child relationships based on document structure
+   - Preserves organizational hierarchy from source documents
+
+#### Migration for Existing Data
+
+If you have existing data ingested before the semantic relationship enhancement, run:
+
+```bash
+python migrate_edges.py
+```
+
+This will:
+- ✅ Update all `next_chunk` edge weights with similarity-based boosting
+- ✅ Add `similar_to` edges for highly similar adjacent chunks
+- ✅ Add `related_to` edges for semantic cross-references
+
+**Results**: The migration typically adds 700+ new semantic edges to a knowledge base with ~480 chunks.
 
 ### The Hybrid Retrieval Mechanism
 
@@ -429,8 +475,25 @@ File/Text → Parser → Chunker → Embedder → Storage → Relationships
 - ✅ **Add Data**: Forms to create nodes and edges manually
 - ✅ **Manage Data**: Update and delete nodes/edges
 - ✅ **Search**: Interactive search with Alpha/Beta sliders and detailed scoring breakdowns
+  - 🆕 **Query Decomposition**: Automatically splits comparison queries ("X vs Y", "difference between A and B")
+  - 🆕 **RRF Fusion**: Reciprocal Rank Fusion for multi-query results with configurable k parameter
 - ✅ **Graph View**: Matplotlib-based subgraph visualization
 - ✅ **Data Explorer**: Tabular view of all nodes and edges
+
+#### 🆕 Interactive 3D Visualization (Vite + React)
+
+- ✅ **3D Force-Directed Graph**: WebGL-based interactive visualization powered by react-force-graph
+- ✅ **Real-time Edge Display**: View semantic relationships (`next_chunk`, `similar_to`, `related_to`)
+- ✅ **Node Interaction**: Click nodes to view details, hover for tooltips
+- ✅ **Semantic Edge Colors**: 
+  - `next_chunk`: Sequential flow (blue)
+  - `similar_to`: High semantic similarity (green)
+  - `related_to`: Cross-references (orange)
+- ✅ **Search Integration**: Find and highlight nodes in the graph
+- ✅ **Layout Controls**: Toggle 3D/2D views, pause/resume physics simulation
+- ✅ **Live Reload**: Automatically fetches latest graph state from API
+
+**Access**: `http://localhost:5174` after running `npm run dev` in `/viz` directory
 
 #### Testing & Population
 
@@ -1104,51 +1167,62 @@ Integration tests.
 
 ### Blockers & Current Status
 
-| Blocker                             | Status         | Resolution                                                         |
-| ----------------------------------- | -------------- | ------------------------------------------------------------------ |
-| Graph Scoring (min distance only)   | ✅ RESOLVED    | Implemented weighted average distance + relationship-aware scoring |
-| FAISS/SQLite Sync                   | ✅ RESOLVED    | Auto-rebuild on startup via `rebuild_faiss_from_sqlite()`          |
-| Graph Expansion (only re-ranking)   | ✅ RESOLVED    | BFS expansion discovers new candidates via `expand_from_seeds()`   |
-| Missing PUT /nodes/{id}             | ✅ RESOLVED    | Added `update_node` endpoint for updating text/metadata            |
-| Missing PUT /edges/{id}             | ✅ RESOLVED    | Added `update_edge` endpoint for updating relation/weight          |
-| Missing DELETE /edges/{id}          | ✅ RESOLVED    | Added `delete_edge` endpoint with edge ID support                  |
-| Missing GET /edges/{id}             | ✅ RESOLVED    | Added `get_edge` endpoint for single edge retrieval                |
-| Missing POST /search/vector         | ✅ RESOLVED    | Added dedicated vector-only search endpoint                        |
-| Edge table has no ID                | ✅ RESOLVED    | Added `id` column to edges table for CRUD operations               |
-| Alpha+Beta must sum to 1.0          | ✅ RESOLVED    | Relaxed constraint - weights are now normalized in fusion          |
-| FAISS Index Type (O(N) brute-force) | ✅ RESOLVED    | Upgraded to `IndexHNSWFlat` for O(log N) search                    |
-| Simple Degree Centrality            | ✅ RESOLVED    | Upgraded to PageRank centrality with 5-minute TTL caching          |
-| Pickle-based Graph Storage          | ✅ RESOLVED    | Migrated to GraphML format for better interoperability             |
-| N+1 Query Problem                   | ✅ RESOLVED    | Implemented batch hydration via `get_nodes_batch()`                |
-| No Offset Pagination                | ✅ RESOLVED    | Added `offset` parameter to all search endpoints                   |
-| In-Memory Graph (RAM limits)        | ⚠️ KNOWN       | NetworkX in-memory. Would need disk-based DB for >100K nodes       |
-| Ground Truth for Benchmark          | ⚠️ PENDING     | `/v1/benchmark` endpoint ready, need labeled data                  |
-| CLI Tool                            | ❌ NOT STARTED | Web UI built, CLI is optional enhancement                          |
+| Blocker                                | Status         | Resolution                                                         |
+| -------------------------------------- | -------------- | ------------------------------------------------------------------ |
+| Graph Scoring (min distance only)      | ✅ RESOLVED    | Implemented weighted average distance + relationship-aware scoring |
+| FAISS/SQLite Sync                      | ✅ RESOLVED    | Auto-rebuild on startup via `rebuild_faiss_from_sqlite()`          |
+| Graph Expansion (only re-ranking)      | ✅ RESOLVED    | BFS expansion discovers new candidates via `expand_from_seeds()`   |
+| Missing PUT /nodes/{id}                | ✅ RESOLVED    | Added `update_node` endpoint for updating text/metadata            |
+| Missing PUT /edges/{id}                | ✅ RESOLVED    | Added `update_edge` endpoint for updating relation/weight          |
+| Missing DELETE /edges/{id}             | ✅ RESOLVED    | Added `delete_edge` endpoint with edge ID support                  |
+| Missing GET /edges/{id}                | ✅ RESOLVED    | Added `get_edge` endpoint for single edge retrieval                |
+| Missing POST /search/vector            | ✅ RESOLVED    | Added dedicated vector-only search endpoint                        |
+| Edge table has no ID                   | ✅ RESOLVED    | Added `id` column to edges table for CRUD operations               |
+| Alpha+Beta must sum to 1.0             | ✅ RESOLVED    | Relaxed constraint - weights are now normalized in fusion          |
+| FAISS Index Type (O(N) brute-force)    | ✅ RESOLVED    | Upgraded to `IndexHNSWFlat` for O(log N) search                    |
+| Simple Degree Centrality               | ✅ RESOLVED    | Upgraded to PageRank centrality with 5-minute TTL caching          |
+| Pickle-based Graph Storage             | ✅ RESOLVED    | Migrated to GraphML format for better interoperability             |
+| N+1 Query Problem                      | ✅ RESOLVED    | Implemented batch hydration via `get_nodes_batch()`                |
+| No Offset Pagination                   | ✅ RESOLVED    | Added `offset` parameter to all search endpoints                   |
+| Query Decomposition                    | ✅ RESOLVED    | Automatic splitting for "X vs Y", "between A and B" queries        |
+| RRF Threshold Bug                      | ✅ RESOLVED    | Skip MINIMUM_RELEVANCE_THRESHOLD for multi-query fusion            |
+| Only next_chunk edges                  | ✅ RESOLVED    | Added semantic similarity edges (`similar_to`, `related_to`)       |
+| Static edge weights                    | ✅ RESOLVED    | Dynamic weights based on cosine similarity during ingestion        |
+| No interactive visualization           | ✅ RESOLVED    | Built 3D force-directed graph with Vite + React                    |
+| In-Memory Graph (RAM limits)           | ⚠️ KNOWN       | NetworkX in-memory. Would need disk-based DB for >100K nodes       |
+| Ground Truth for Benchmark             | ⚠️ PENDING     | `/v1/benchmark` endpoint ready, need labeled data                  |
+| CLI Tool                               | ❌ NOT STARTED | Web UI built, CLI is optional enhancement                          |
 
 ### Stretch Goals Progress
 
-| Goal                                          | Status  | Notes                                           |
-| --------------------------------------------- | ------- | ----------------------------------------------- |
-| Improve graph scoring (weighted avg distance) | ✅ DONE | `calculate_expanded_graph_score`                |
-| Graph expansion algorithm                     | ✅ DONE | `expand_from_seeds` with BFS                    |
-| Relationship-aware scoring                    | ✅ DONE | `get_relationship_score` with edge type weights |
-| Auto-rebuild FAISS from SQLite                | ✅ DONE | `rebuild_faiss_from_sqlite()` on startup        |
-| Batch vector similarity                       | ✅ DONE | `batch_compute_similarity` for efficiency       |
-| Full CRUD for nodes (including UPDATE)        | ✅ DONE | `PUT /v1/nodes/{uuid}` with re-embedding        |
-| Full CRUD for edges (GET/PUT/DELETE by ID)    | ✅ DONE | Edge ID column + all endpoints                  |
-| Pure vector search endpoint                   | ✅ DONE | `POST /v1/search/vector`                        |
-| Flexible alpha/beta weights                   | ✅ DONE | Weights normalized, no sum-to-1 requirement     |
-| UI: Manage Data page                          | ✅ DONE | Update/Delete nodes, Delete edges               |
-| UI: Search type selector                      | ✅ DONE | Hybrid / Vector Only / Graph Only modes         |
-| HNSW Index for O(log N) search                | ✅ DONE | `IndexHNSWFlat` with M=32, efSearch=64          |
-| PageRank Centrality                           | ✅ DONE | Cached PageRank with 5-minute TTL               |
-| GraphML Persistence                           | ✅ DONE | Replaced pickle with GraphML format             |
-| Batch Hydration                               | ✅ DONE | `get_nodes_batch()` eliminates N+1 queries      |
-| Offset Pagination                             | ✅ DONE | All search endpoints support `offset` parameter |
-| Multi-hop reasoning path                      | ❌ TODO | Show traversal path in results                  |
-| Relationship filtering                        | ❌ TODO | Filter by edge types in API                     |
-| CLI tool                                      | ❌ TODO | For scripted querying                           |
-| Dockerization                                 | ❌ TODO | For easy deployment                             |
-| Architecture diagram                          | ❌ TODO | Visual system overview                          |
+| Goal                                          | Status  | Notes                                                      |
+| --------------------------------------------- | ------- | ---------------------------------------------------------- |
+| Improve graph scoring (weighted avg distance) | ✅ DONE | `calculate_expanded_graph_score`                           |
+| Graph expansion algorithm                     | ✅ DONE | `expand_from_seeds` with BFS                               |
+| Relationship-aware scoring                    | ✅ DONE | `get_relationship_score` with edge type weights            |
+| Auto-rebuild FAISS from SQLite                | ✅ DONE | `rebuild_faiss_from_sqlite()` on startup                   |
+| Batch vector similarity                       | ✅ DONE | `batch_compute_similarity` for efficiency                  |
+| Full CRUD for nodes (including UPDATE)        | ✅ DONE | `PUT /v1/nodes/{uuid}` with re-embedding                   |
+| Full CRUD for edges (GET/PUT/DELETE by ID)    | ✅ DONE | Edge ID column + all endpoints                             |
+| Pure vector search endpoint                   | ✅ DONE | `POST /v1/search/vector`                                   |
+| Flexible alpha/beta weights                   | ✅ DONE | Weights normalized, no sum-to-1 requirement                |
+| UI: Manage Data page                          | ✅ DONE | Update/Delete nodes, Delete edges                          |
+| UI: Search type selector                      | ✅ DONE | Hybrid / Vector Only / Graph Only modes                    |
+| HNSW Index for O(log N) search                | ✅ DONE | `IndexHNSWFlat` with M=32, efSearch=64                     |
+| PageRank Centrality                           | ✅ DONE | Cached PageRank with 5-minute TTL                          |
+| GraphML Persistence                           | ✅ DONE | Replaced pickle with GraphML format                        |
+| Batch Hydration                               | ✅ DONE | `get_nodes_batch()` eliminates N+1 queries                 |
+| Offset Pagination                             | ✅ DONE | All search endpoints support `offset` parameter            |
+| Query Decomposition                           | ✅ DONE | Automatic splitting for comparison queries                 |
+| RRF Multi-Query Fusion                        | ✅ DONE | Reciprocal Rank Fusion with configurable k parameter       |
+| Semantic Edge Weights                         | ✅ DONE | Dynamic weights based on cosine similarity                 |
+| Cross-Document Relationships                  | ✅ DONE | `related_to` edges for non-adjacent semantic similarity    |
+| Interactive 3D Visualization                  | ✅ DONE | Vite + React force-directed graph with edge type colors    |
+| Edge Migration Tool                           | ✅ DONE | `migrate_edges.py` for retroactive semantic edge creation  |
+| Multi-hop reasoning path                      | ❌ TODO | Show traversal path in results                             |
+| Relationship filtering                        | ❌ TODO | Filter by edge types in API                                |
+| CLI tool                                      | ❌ TODO | For scripted querying                                      |
+| Dockerization                                 | ❌ TODO | For easy deployment                                        |
+| Architecture diagram                          | ❌ TODO | Visual system overview                                     |
 
 **Question**: Which of the remaining items would you prioritize for evaluation?

@@ -419,7 +419,7 @@ page = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.link_button("🚀 Launch Interactive Viz", "http://localhost:5174", use_container_width=True)
+st.sidebar.link_button("🚀 Launch Interactive Viz", "http://localhost:5173", use_container_width=True)
 
 def check_health():
     try:
@@ -1202,7 +1202,7 @@ elif page == "🕸️ Graph View":
     st.caption("Explore relationships between nodes in your knowledge graph")
     
     st.info("💡 **New:** Try our interactive 3D/2D visualization!")
-    st.link_button("🚀 Launch Interactive Visualization", "http://localhost:5174", type="primary")
+    st.link_button("🚀 Launch Interactive Visualization", "http://localhost:5173", type="primary")
     
     st.divider()
     
